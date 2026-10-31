@@ -1,9 +1,12 @@
 # Local runtime / secrets (never commit)
 state/
 *.sif
+*.sif.*
 *.img
 *.tar.gz
 *.AppImage
+apptainer/*.bak
+state/apps/
 secrets.env
 .env
 **/custom_models.json
