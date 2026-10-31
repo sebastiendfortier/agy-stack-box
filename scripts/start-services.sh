@@ -89,7 +89,7 @@ info "Proxy healthy on instance loopback :${PROXY_PORT}"
 # Start Obsidian AppImage (GUI + Local REST API plugin in the vault)
 if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
   bash -lc "curl -fsS --max-time 2 http://127.0.0.1:${OBSIDIAN_REST_PORT}/ >/dev/null 2>&1 \
-    || curl -fkSs --max-time 2 https://127.0.0.1:27124/ >/dev/null 2>&1"; then
+    || curl -fkSs --max-time 2 https://127.0.0.1:${OBSIDIAN_HTTPS_PORT}/ >/dev/null 2>&1"; then
   info "Starting Obsidian AppImage (vault=$VAULT_HOST_PATH)..."
   exec_in_instance "$RT" "$INSTANCE_NAME" \
     bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\"

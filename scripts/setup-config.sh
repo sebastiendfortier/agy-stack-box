@@ -18,7 +18,8 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
 fi
 
 load_secrets
-export VAULT_IN_CONTAINER PROXY_PORT OBSIDIAN_REST_PORT
+export VAULT_IN_CONTAINER PROXY_PORT OBSIDIAN_REST_PORT OBSIDIAN_HTTPS_PORT
+info "Ports for this user (uid=$(id -u)): PROXY_PORT=$PROXY_PORT OBSIDIAN_REST_PORT=$OBSIDIAN_REST_PORT OBSIDIAN_HTTPS_PORT=$OBSIDIAN_HTTPS_PORT"
 
 # Seed defaults if empty after first edit check
 if [[ -z "${OPENROUTER_API_KEY}" || -z "${OBSIDIAN_API_KEY}" || -z "${VAULT_HOST_PATH}" ]]; then
@@ -67,12 +68,26 @@ mkdir -p "$STATE_DIR/home"
 rm -f "$STATE_DIR/home/.gemini"
 ln -sfn ../gemini "$STATE_DIR/home/.gemini"
 
-# Remind about Obsidian Local REST API plugin config in the vault
+# Sync Local REST API listen ports (+ api key) so multi-user hosts do not share 27123.
 EXAMPLE_REST="$ROOT/config/templates/obsidian-local-rest-api.data.json.example"
 VAULT_PLUGIN_DATA="$VAULT_HOST_PATH/.obsidian/plugins/obsidian-local-rest-api/data.json"
 if [[ ! -f "$VAULT_PLUGIN_DATA" ]]; then
   info "Note: install Obsidian Local REST API in the vault and set apiKey to match OBSIDIAN_API_KEY."
   info "Example shape: $EXAMPLE_REST"
+else
+  python3 - "$VAULT_PLUGIN_DATA" "$OBSIDIAN_REST_PORT" "$OBSIDIAN_HTTPS_PORT" "$OBSIDIAN_API_KEY" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+insecure, secure, key = int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+data = json.loads(path.read_text())
+data["insecurePort"] = insecure
+data["port"] = secure
+data["enableInsecureServer"] = True
+if key:
+    data["apiKey"] = key
+path.write_text(json.dumps(data, indent=2) + "\n")
+print(f"updated {path}: insecurePort={insecure} port={secure}")
+PY
 fi
 
 info "Config ready under $STATE_DIR"

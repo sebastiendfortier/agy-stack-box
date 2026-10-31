@@ -128,7 +128,7 @@ Default (`AGY_NET_MODE=host`, recommended for HPC and most desktops):
 - Proxy / Obsidian still bind `127.0.0.1` only (not reachable from other machines on the LAN)
 - OpenRouter egress uses the host’s normal outbound path
 - Start-ide/cli still `exec` into the instance
-- Instance name / ports are uid-derived (override with `INSTANCE_NAME`, `PROXY_PORT`, `OBSIDIAN_REST_PORT`)
+- **Multi-user ports:** `INSTANCE_NAME`, `PROXY_PORT`, `OBSIDIAN_REST_PORT`, and `OBSIDIAN_HTTPS_PORT` default from your uid so two users on one login node do not collide. Do **not** hardcode `50999` / `27123` in `secrets.env` on shared hosts. `setup-config.sh` writes the Obsidian plugin’s listen ports to match.
 - `$HOME` inside the instance is your **real login home** (file pickers see your files). Stack config is overlaid onto `~/.gemini`, `~/.config/Antigravity IDE`, and `~/.config/obsidian` from `state/`. Add scratch/projects with `AGY_EXTRA_BINDS` in `secrets.env`.
 
 ### Multi-user / shared login node (honest limits)

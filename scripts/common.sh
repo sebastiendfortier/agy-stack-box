@@ -8,10 +8,12 @@ SECRETS_FILE="$STATE_DIR/secrets.env"
 # Per-user defaults so shared login nodes do not collide on instance name / ports.
 _AGY_UID="$(id -u)"
 INSTANCE_NAME_DEFAULT="agy-stack-${USER:-$_AGY_UID}"
-# Stay in 30000–59999; two ports per uid bucket (proxy, then REST).
-_AGY_PORT_BASE=$((30000 + (_AGY_UID % 15000) * 2))
+# Stay in 30000–59999; three ports per uid bucket (proxy, Obsidian HTTP, Obsidian HTTPS).
+# uid%10000 → 10k users before wrap; *3 keeps triples non-overlapping within the band.
+_AGY_PORT_BASE=$((30000 + (_AGY_UID % 10000) * 3))
 PROXY_PORT_DEFAULT="$_AGY_PORT_BASE"
 OBSIDIAN_REST_PORT_DEFAULT="$((_AGY_PORT_BASE + 1))"
+OBSIDIAN_HTTPS_PORT_DEFAULT="$((_AGY_PORT_BASE + 2))"
 SIF_DEFAULT="$ROOT/apptainer/agy-stack.sif"
 VAULT_IN_CONTAINER="/vault"
 STATE_IN_CONTAINER="/agy-state"
@@ -42,6 +44,11 @@ resolve_runtime() {
   fi
 }
 
+# True if secrets.env assigns this key (ignore ambient shell exports from old sessions).
+secrets_has() {
+  grep -qE "^[[:space:]]*$1=" "$SECRETS_FILE" 2>/dev/null
+}
+
 load_secrets() {
   [[ -f "$SECRETS_FILE" ]] || die "missing $SECRETS_FILE — run ./scripts/setup-config.sh first"
   # shellcheck disable=SC1090
@@ -53,9 +60,27 @@ load_secrets() {
   : "${OBSIDIAN_API_KEY:?OBSIDIAN_API_KEY unset in secrets.env}"
   : "${VAULT_HOST_PATH:?VAULT_HOST_PATH unset in secrets.env}"
   [[ -d "$VAULT_HOST_PATH" ]] || die "VAULT_HOST_PATH is not a directory: $VAULT_HOST_PATH"
-  INSTANCE_NAME="${INSTANCE_NAME:-$INSTANCE_NAME_DEFAULT}"
-  PROXY_PORT="${PROXY_PORT:-$PROXY_PORT_DEFAULT}"
-  OBSIDIAN_REST_PORT="${OBSIDIAN_REST_PORT:-$OBSIDIAN_REST_PORT_DEFAULT}"
+  if secrets_has INSTANCE_NAME; then
+    : "${INSTANCE_NAME:?INSTANCE_NAME empty in secrets.env}"
+  else
+    INSTANCE_NAME="$INSTANCE_NAME_DEFAULT"
+  fi
+  # Ports: uid defaults unless explicitly set in secrets.env (not merely in the shell env).
+  if secrets_has PROXY_PORT; then
+    : "${PROXY_PORT:?PROXY_PORT empty in secrets.env}"
+  else
+    PROXY_PORT="$PROXY_PORT_DEFAULT"
+  fi
+  if secrets_has OBSIDIAN_REST_PORT; then
+    : "${OBSIDIAN_REST_PORT:?OBSIDIAN_REST_PORT empty in secrets.env}"
+  else
+    OBSIDIAN_REST_PORT="$OBSIDIAN_REST_PORT_DEFAULT"
+  fi
+  if secrets_has OBSIDIAN_HTTPS_PORT; then
+    : "${OBSIDIAN_HTTPS_PORT:?OBSIDIAN_HTTPS_PORT empty in secrets.env}"
+  else
+    OBSIDIAN_HTTPS_PORT="$OBSIDIAN_HTTPS_PORT_DEFAULT"
+  fi
   SIF_PATH="${SIF_PATH:-$SIF_DEFAULT}"
   # Optional colon/comma-separated extra binds (HPC scratch, projects, …), e.g. /scratch/$USER:/scratch/$USER
   AGY_EXTRA_BINDS="${AGY_EXTRA_BINDS:-}"
