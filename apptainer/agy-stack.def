@@ -32,9 +32,10 @@ From: rockylinux:9
     ADD_MODEL_GIT='https://github.com/vahapogut/antigravity-add-model.git'
     ADD_MODEL_REF='f793635'
 
+    # Do NOT run `dnf update` under fakeroot — upgrading `filesystem` fails with
+    # "cpio: chown failed" on /dev and aborts the SIF build.
     dnf -y install epel-release
-    dnf -y update
-    dnf -y install \
+    dnf -y install --setopt=install_weak_deps=False \
       ca-certificates curl wget git tar gzip which findutils \
       python3 \
       libX11 libXcomposite libXdamage libXext libXfixes libXrandr libxkbcommon \
@@ -43,7 +44,7 @@ From: rockylinux:9
       xdg-utils procps-ng iproute
 
     curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
-    dnf -y install nodejs
+    dnf -y install --setopt=install_weak_deps=False nodejs
     node -v && npm -v
 
     mkdir -p /opt/antigravity-ide /opt/obsidian /opt/agy/bin /usr/local/bin /opt/agy-stack/host-scripts
