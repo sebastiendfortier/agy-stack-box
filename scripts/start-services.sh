@@ -45,6 +45,12 @@ if ! instance_running "$RT" "$INSTANCE_NAME"; then
   done < <(vault_binds)
   while IFS= read -r b; do
     [[ -n "$b" ]] && start_args+=(--bind "$b")
+  done < <(config_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && start_args+=(--bind "$b")
+  done < <(extra_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && start_args+=(--bind "$b")
   done < <(script_binds)
   while IFS= read -r b; do
     [[ -n "$b" ]] && start_args+=(--bind "$b")
@@ -78,7 +84,7 @@ if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
   bash -lc "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null 2>&1"; then
   info "Starting OpenRouter BYOK proxy on 127.0.0.1:${PROXY_PORT}..."
   exec_in_instance "$RT" "$INSTANCE_NAME" \
-    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\" \"\$AGY_STATE/gemini/antigravity\"; nohup env PROXY_PORT=\"\$PROXY_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" AGY_STATE=\"\$AGY_STATE\" HOME=\"\$AGY_STATE/home\" openrouter-proxy >>\"\$AGY_STATE/logs/proxy.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/proxy.pid\""
+    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\" \"\$AGY_STATE/gemini/antigravity\"; nohup env PROXY_PORT=\"\$PROXY_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" AGY_STATE=\"\$AGY_STATE\" openrouter-proxy >>\"\$AGY_STATE/logs/proxy.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/proxy.pid\""
   for _ in $(seq 1 30); do
     if exec_in_instance "$RT" "$INSTANCE_NAME" \
       bash -lc "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null 2>&1"; then
@@ -98,8 +104,12 @@ if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
     || curl -fkSs --max-time 2 https://127.0.0.1:27124/ >/dev/null 2>&1"; then
   info "Starting Obsidian AppImage (vault=$VAULT_HOST_PATH)..."
   exec_in_instance "$RT" "$INSTANCE_NAME" \
-    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\"; # Kill a previous Obsidian in this instance if any
-      pkill -f 'Obsidian.AppImage|obsidian --no-sandbox' 2>/dev/null || true
+    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\"
+      # Avoid pkill -f matching this shell; kill prior AppImage by pid file if present.
+      if [[ -f \"\$AGY_STATE/pids/obsidian.pid\" ]]; then
+        kill \"\$(cat \"\$AGY_STATE/pids/obsidian.pid\")\" 2>/dev/null || true
+        sleep 0.5
+      fi
       nohup obsidian-stack \"\${VAULT_HOST_PATH:-\$VAULT_PATH}\" >>\"\$AGY_STATE/logs/obsidian.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/obsidian.pid\""
   info "Obsidian launched with preconfigured vault $VAULT_HOST_PATH"
   info "REST should listen on 127.0.0.1:${OBSIDIAN_REST_PORT} (insecure) inside the instance only."

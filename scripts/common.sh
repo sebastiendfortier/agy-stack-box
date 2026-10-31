@@ -15,6 +15,9 @@ OBSIDIAN_REST_PORT_DEFAULT="$((_AGY_PORT_BASE + 1))"
 SIF_DEFAULT="$ROOT/apptainer/agy-stack.sif"
 VAULT_IN_CONTAINER="/vault"
 STATE_IN_CONTAINER="/agy-state"
+# Real login home (for file pickers). Not state/home — that overlay made IDE see an empty $HOME.
+HOST_HOME="${AGY_HOST_HOME:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)}"
+HOST_HOME="${HOST_HOME:-${HOME:-}}"
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "$*"; }
@@ -54,6 +57,8 @@ load_secrets() {
   PROXY_PORT="${PROXY_PORT:-$PROXY_PORT_DEFAULT}"
   OBSIDIAN_REST_PORT="${OBSIDIAN_REST_PORT:-$OBSIDIAN_REST_PORT_DEFAULT}"
   SIF_PATH="${SIF_PATH:-$SIF_DEFAULT}"
+  # Optional colon/comma-separated extra binds (HPC scratch, projects, …), e.g. /scratch/$USER:/scratch/$USER
+  AGY_EXTRA_BINDS="${AGY_EXTRA_BINDS:-}"
 }
 
 render_template() {
@@ -127,9 +132,34 @@ script_binds() {
   done
 }
 
-# Singularity rejects --env HOME=...; use --home instead.
+# Stack-managed config layered onto the real home (HOME stays the real home for pickers).
+config_binds() {
+  [[ -n "$HOST_HOME" && -d "$HOST_HOME" ]] || return 0
+  mkdir -p \
+    "$STATE_DIR/gemini" \
+    "$STATE_DIR/home/.config/Antigravity IDE" \
+    "$STATE_DIR/home/.config/obsidian" \
+    "$HOST_HOME/.config" \
+    "$HOST_HOME/.gemini"
+  printf '%s\n' "$STATE_DIR/gemini:$HOST_HOME/.gemini"
+  printf '%s\n' "$STATE_DIR/home/.config/Antigravity IDE:$HOST_HOME/.config/Antigravity IDE"
+  printf '%s\n' "$STATE_DIR/home/.config/obsidian:$HOST_HOME/.config/obsidian"
+}
+
+extra_binds() {
+  local raw="${AGY_EXTRA_BINDS:-}" entry
+  raw="${raw//,/ }"
+  for entry in $raw; do
+    [[ -n "$entry" ]] || continue
+    # Allow src or src:dest
+    printf '%s\n' "$entry"
+  done
+}
+
+# Singularity rejects --env HOME=...; use --home with the real login home.
 instance_home_args() {
-  printf '%s\n' --home "$STATE_DIR/home:$STATE_IN_CONTAINER/home"
+  [[ -n "$HOST_HOME" && -d "$HOST_HOME" ]] || die "HOST_HOME unset or missing (set AGY_HOST_HOME)"
+  printf '%s\n' --home "$HOST_HOME"
 }
 
 # Env every instance start / exec needs (ports, proxy URL, state paths, secrets).
@@ -170,6 +200,12 @@ exec_in_instance() {
   while IFS= read -r b; do
     [[ -n "$b" ]] && args+=(--bind "$b")
   done < <(vault_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && args+=(--bind "$b")
+  done < <(config_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && args+=(--bind "$b")
+  done < <(extra_binds)
   while IFS= read -r b; do
     [[ -n "$b" ]] && args+=(--bind "$b")
   done < <(script_binds)

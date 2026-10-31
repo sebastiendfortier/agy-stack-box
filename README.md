@@ -115,6 +115,7 @@ Default (`AGY_NET_MODE=host`, recommended for HPC and most desktops):
 - OpenRouter egress uses the host’s normal outbound path
 - Start-ide/cli still `exec` into the instance
 - Instance name / ports are uid-derived (override with `INSTANCE_NAME`, `PROXY_PORT`, `OBSIDIAN_REST_PORT`)
+- `$HOME` inside the instance is your **real login home** (file pickers see your files). Stack config is overlaid onto `~/.gemini`, `~/.config/Antigravity IDE`, and `~/.config/obsidian` from `state/`. Add scratch/projects with `AGY_EXTRA_BINDS` in `secrets.env`.
 
 ### Multi-user / shared login node (honest limits)
 
