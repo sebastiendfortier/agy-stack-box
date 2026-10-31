@@ -59,9 +59,13 @@ if ! instance_running "$RT" "$INSTANCE_NAME"; then
 
   if [[ "$NET_MODE" == bridge ]]; then
     if ! "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME"; then
-      info "unprivileged bridge start failed; retrying with sudo..."
-      sudo "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \
-        || die "bridge instance start failed even with sudo. Use AGY_NET_MODE=host or fix CNI/iptables."
+      if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        info "unprivileged bridge start failed; retrying with passwordless sudo..."
+        sudo "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \
+          || die "bridge start failed. On HPC (no sudo) use default AGY_NET_MODE=host."
+      else
+        die "bridge CNI start failed and sudo is unavailable (typical on HPC). Use AGY_NET_MODE=host (default)."
+      fi
     fi
   else
     "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \

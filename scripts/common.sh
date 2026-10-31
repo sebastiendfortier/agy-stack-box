@@ -5,7 +5,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${AGY_STACK_STATE:-$ROOT/state}"
 SECRETS_FILE="$STATE_DIR/secrets.env"
-INSTANCE_NAME_DEFAULT="agy-stack"
+# Per-user defaults so shared login nodes do not collide on instance name / ports.
+_AGY_UID="$(id -u)"
+INSTANCE_NAME_DEFAULT="agy-stack-${USER:-$_AGY_UID}"
+# Stay in 30000–59999; two ports per uid bucket (proxy, then REST).
+_AGY_PORT_BASE=$((30000 + (_AGY_UID % 15000) * 2))
+PROXY_PORT_DEFAULT="$_AGY_PORT_BASE"
+OBSIDIAN_REST_PORT_DEFAULT="$((_AGY_PORT_BASE + 1))"
 SIF_DEFAULT="$ROOT/apptainer/agy-stack.sif"
 VAULT_IN_CONTAINER="/vault"
 STATE_IN_CONTAINER="/agy-state"
@@ -45,8 +51,8 @@ load_secrets() {
   : "${VAULT_HOST_PATH:?VAULT_HOST_PATH unset in secrets.env}"
   [[ -d "$VAULT_HOST_PATH" ]] || die "VAULT_HOST_PATH is not a directory: $VAULT_HOST_PATH"
   INSTANCE_NAME="${INSTANCE_NAME:-$INSTANCE_NAME_DEFAULT}"
-  PROXY_PORT="${PROXY_PORT:-50999}"
-  OBSIDIAN_REST_PORT="${OBSIDIAN_REST_PORT:-27123}"
+  PROXY_PORT="${PROXY_PORT:-$PROXY_PORT_DEFAULT}"
+  OBSIDIAN_REST_PORT="${OBSIDIAN_REST_PORT:-$OBSIDIAN_REST_PORT_DEFAULT}"
   SIF_PATH="${SIF_PATH:-$SIF_DEFAULT}"
 }
 
@@ -61,8 +67,8 @@ replacements = {
     "{{OBSIDIAN_API_KEY}}": os.environ["OBSIDIAN_API_KEY"],
     "{{VAULT_HOST_PATH}}": os.environ["VAULT_HOST_PATH"],
     "{{VAULT_IN_CONTAINER}}": os.environ.get("VAULT_IN_CONTAINER", "/vault"),
-    "{{PROXY_PORT}}": os.environ.get("PROXY_PORT", "50999"),
-    "{{OBSIDIAN_REST_PORT}}": os.environ.get("OBSIDIAN_REST_PORT", "27123"),
+    "{{PROXY_PORT}}": os.environ["PROXY_PORT"],
+    "{{OBSIDIAN_REST_PORT}}": os.environ["OBSIDIAN_REST_PORT"],
 }
 for key, value in replacements.items():
     text = text.replace(key, value)
