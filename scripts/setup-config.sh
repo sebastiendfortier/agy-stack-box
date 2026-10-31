@@ -17,6 +17,14 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
   exit 0
 fi
 
+# Fresh HPC clone: create the vault path before load_secrets validates it.
+_vault="$(grep -E '^[[:space:]]*VAULT_HOST_PATH=' "$SECRETS_FILE" | tail -1 | cut -d= -f2-)"
+_vault="${_vault%$'\r'}"; _vault="${_vault%\"}"; _vault="${_vault#\"}"; _vault="${_vault%\'}"; _vault="${_vault#\'}"
+if [[ -n "$_vault" && ! -d "$_vault" ]]; then
+  mkdir -p "$_vault"
+  info "Created vault directory: $_vault (stubs come from harness/ via init-vault.sh)"
+fi
+
 load_secrets
 export VAULT_IN_CONTAINER PROXY_PORT OBSIDIAN_REST_PORT OBSIDIAN_HTTPS_PORT
 info "Ports for this user (uid=$(id -u)): PROXY_PORT=$PROXY_PORT OBSIDIAN_REST_PORT=$OBSIDIAN_REST_PORT OBSIDIAN_HTTPS_PORT=$OBSIDIAN_HTTPS_PORT"
@@ -90,6 +98,9 @@ print(f"updated {path}: insecurePort={insecure} port={secure}")
 PY
 fi
 
+# Bootstrap the local vault from harness/ (no workstation vault needed on HPC).
+"$SCRIPT_DIR/init-vault.sh" "$VAULT_HOST_PATH"
+
 info "Config ready under $STATE_DIR"
 info "Next: ./scripts/fetch-apps.sh   # IDE + Obsidian + agy into state/apps"
-info "Then:  ./scripts/build-sif.sh && ./scripts/start-services.sh"
+info "Then:  ./scripts/seed-cmc-profile.sh && ./scripts/start-services.sh"

@@ -26,12 +26,14 @@ cd agy-stack-box
 Skip `enable-local-build.sh` and bridge mode. Prefer building the SIF on a laptop/CI, or on the cluster with `./scripts/build-sif.sh` (that script **unsets** `APPTAINER_BIND` / `SINGULARITY_BIND*` for the build only — HPC module binds often break `%post`; they stay in effect for `start-services` / run). Then:
 
 ```bash
-./scripts/setup-config.sh
+./scripts/setup-config.sh     # creates a fresh local vault from harness/ if VAULT_HOST_PATH is new
 ./scripts/fetch-apps.sh
 ./scripts/fetch-skills.sh     # ponytail + caveman into state/ (+ host Cursor/agy when WIRE_HOST=1)
 ./scripts/seed-cmc-profile.sh # CMC modes + profile; prefers vault, falls back to harness/
 ./scripts/start-services.sh   # AGY_NET_MODE=host by default — no sudo
 ```
+
+No workstation vault needed: `setup-config.sh` creates `VAULT_HOST_PATH` when missing and seeds `setup/`, `glossary/`, `agent-sessions/`, `adrs/`, `lessons/`, `runbooks/` from `harness/`. Re-run `./scripts/init-vault.sh [path]` any time to add missing stubs (never overwrites).
 
 #### Ubuntu laptop local builds (sudo once)
 
@@ -74,7 +76,7 @@ Set `WIRE_HOST=0` to only refresh `state/`. Defaults live in `~/.config/ponytail
 
 `harness/` holds tracked copies of the CMC plan, questionnaire (`status: partial`), profile, glossary stub, and `agent-sessions/` template. `seed-cmc-profile.sh` writes the always-on `GEMINI.md.d/cmc-profile.md`, the `cmc-profile` skill, the Architect/Code/Ops/Science/Docs agents, and references for the glossary + plan.
 
-Source order: vault (`$VAULT_HOST_PATH`) first, then `harness/`. Overrides: `CMC_VAULT_ROOT`, `CMC_PROFILE_SRC`, `CMC_GLOSSARY_SRC`, `CMC_SEED_DIR`. When the vault exists, the script also scaffolds `agent-sessions/`, `glossary/`, `adrs/`, `lessons/`, `runbooks/` and only seeds missing stubs.
+Source order: vault (`$VAULT_HOST_PATH`) first, then `harness/`. Overrides: `CMC_VAULT_ROOT`, `CMC_PROFILE_SRC`, `CMC_GLOSSARY_SRC`, `CMC_SEED_DIR`. `init-vault.sh` bootstraps a local vault from `harness/` (called by `setup-config.sh`), so an HPC clone never depends on the workstation vault.
 
 Redact hostnames, queues, absolute HPC paths, and secrets before committing changes under `harness/` — this repo may be public.
 
@@ -156,7 +158,7 @@ Optional strict mode (`AGY_NET_MODE=bridge`): CNI private netns. Needs a site th
 
 ## Obsidian vault
 
-1. Point `VAULT_HOST_PATH` at your **vault directory** (the folder that contains `.obsidian/`, e.g. `~/KnowledgeBase/CodeVault` — not the parent `KnowledgeBase`).
+1. Point `VAULT_HOST_PATH` at your **vault directory** (the folder that contains `.obsidian/`, e.g. `~/KnowledgeBase/CodeVault` — not the parent `KnowledgeBase`). On a fresh HPC clone, point it anywhere writable; `setup-config.sh` creates it and seeds the harness stubs.
 2. Install community plugin **Local REST API**.
 3. Set the plugin API key to the same value as `OBSIDIAN_API_KEY`.
 4. Prefer insecure HTTP on localhost (port = `OBSIDIAN_REST_PORT`, uid-derived by default; see `config/templates/obsidian-local-rest-api.data.json.example`).

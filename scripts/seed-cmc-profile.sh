@@ -10,6 +10,8 @@ source "$SCRIPT_DIR/common.sh"
 WIRE_HOST="${WIRE_HOST:-1}"
 SEED_DIR="${CMC_SEED_DIR:-$ROOT/harness}"
 VAULT_ROOT="${CMC_VAULT_ROOT:-${VAULT_HOST_PATH:-$HOME/KnowledgeBase/CodeVault}}"
+VAULT_EXPLICIT=0
+[[ -n "${CMC_VAULT_ROOT:-}${VAULT_HOST_PATH:-}" ]] && VAULT_EXPLICIT=1
 VAULT_CMC="${CMC_PROFILE_SRC:-$VAULT_ROOT/setup/cmc-profile}"
 VAULT_GLOSSARY="${CMC_GLOSSARY_SRC:-$VAULT_ROOT/glossary}"
 PROFILE_SRC="$VAULT_CMC"
@@ -131,21 +133,12 @@ if [[ -f "$PLAN_SRC" ]]; then
   cp -a "$PLAN_SRC" "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs/CMC-Harness-Plan.md"
 fi
 
-# --- Vault scaffold (only when the vault exists; repo harness/ works stand-alone) ---
-seed_if_missing() {
-  local src="$1" dest="$2"
-  [[ -f "$src" && ! -e "$dest" ]] || return 0
-  mkdir -p "$(dirname "$dest")"
-  cp -a "$src" "$dest"
-  info "seeded $dest"
-}
-
-if [[ -d "$VAULT_ROOT" ]]; then
-  mkdir -p "$VAULT_ROOT"/{agent-sessions,glossary,adrs,lessons,runbooks}
-  seed_if_missing "$SEED_DIR/agent-sessions/README.md" "$VAULT_ROOT/agent-sessions/README.md"
-  seed_if_missing "$SEED_DIR/glossary/MODEX-WINGS.md" "$VAULT_ROOT/glossary/MODEX-WINGS.md"
+# --- Vault: reuse an existing one, or bootstrap a local vault on a fresh HPC clone ---
+if [[ -d "$VAULT_ROOT" || "${VAULT_EXPLICIT:-0}" == "1" ]]; then
+  "$SCRIPT_DIR/init-vault.sh" "$VAULT_ROOT"
 else
-  info "No vault at $VAULT_ROOT — using repo harness/ only (set VAULT_HOST_PATH to scaffold a vault)"
+  info "No vault at $VAULT_ROOT — using repo harness/ only"
+  info "  set VAULT_HOST_PATH (or run ./scripts/init-vault.sh /path) to bootstrap one"
 fi
 
 # Ensure GEMINI.md mentions CMC if missing
