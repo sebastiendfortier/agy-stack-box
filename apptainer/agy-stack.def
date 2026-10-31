@@ -1,0 +1,105 @@
+Bootstrap: docker
+From: rockylinux:9
+
+%labels
+    Author sebastiendfortier
+    App agy-stack-box
+    Description Antigravity IDE + agy CLI + OpenRouter BYOK proxy + Obsidian AppImage (private-net instance)
+
+%help
+    Strict private-net stack. Prefer host scripts in the git repo:
+      ./scripts/setup-config.sh
+      ./scripts/start-services.sh
+      ./scripts/start-ide.sh
+      ./scripts/start-cli.sh
+
+    Build (from repo root):
+      singularity build apptainer/agy-stack.sif apptainer/agy-stack.def
+      # or: apptainer build apptainer/agy-stack.sif apptainer/agy-stack.def
+
+%files
+    rootfs-scripts/openrouter-proxy.sh /opt/agy-stack/host-scripts/openrouter-proxy.sh
+    rootfs-scripts/agy.sh /opt/agy-stack/host-scripts/agy.sh
+    rootfs-scripts/antigravity-ide.sh /opt/agy-stack/host-scripts/antigravity-ide.sh
+    rootfs-scripts/obsidian-stack.sh /opt/agy-stack/host-scripts/obsidian-stack.sh
+
+%post
+    set -euo pipefail
+
+    # Pinned downloads (edit here to bump versions)
+    ANTIGRAVITY_IDE_URL='https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/2.6.0-5526304964083712/linux-x64/Antigravity%20IDE.tar.gz'
+    OBSIDIAN_APPIMAGE_URL='https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.5/Obsidian-1.14.5.AppImage'
+    ADD_MODEL_GIT='https://github.com/vahapogut/antigravity-add-model.git'
+    ADD_MODEL_REF='f793635'
+
+    dnf -y install epel-release
+    dnf -y update
+    dnf -y install \
+      ca-certificates curl wget git tar gzip which findutils \
+      python3 \
+      libX11 libXcomposite libXdamage libXext libXfixes libXrandr libxkbcommon \
+      libxshmfence libdrm mesa-libGL mesa-libgbm nss nspr atk at-spi2-atk \
+      gtk3 pango cairo alsa-lib cups-libs libsecret dbus-libs \
+      xdg-utils procps-ng iproute
+
+    curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+    dnf -y install nodejs
+    node -v && npm -v
+
+    mkdir -p /opt/antigravity-ide /opt/obsidian /opt/agy/bin /usr/local/bin /opt/agy-stack/host-scripts
+
+    echo "Fetching Antigravity IDE..."
+    curl -fL "$ANTIGRAVITY_IDE_URL" -o /tmp/antigravity-ide.tar.gz
+    tar -xzf /tmp/antigravity-ide.tar.gz -C /opt/antigravity-ide
+    rm -f /tmp/antigravity-ide.tar.gz
+    if [[ ! -x "/opt/antigravity-ide/Antigravity IDE/antigravity-ide" ]]; then
+      echo "Antigravity IDE binary missing after extract" >&2
+      find /opt/antigravity-ide -maxdepth 3 -type f -name 'antigravity-ide' -o -name 'Antigravity*' | head
+      exit 1
+    fi
+    chmod 4755 "/opt/antigravity-ide/Antigravity IDE/chrome-sandbox" 2>/dev/null || true
+
+    echo "Installing agy CLI..."
+    curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh
+    # Force a predictable prefix when the installer honors PREFIX / install dir env vars
+    export AGY_INSTALL_DIR=/opt/agy
+    bash /tmp/agy-install.sh || true
+    rm -f /tmp/agy-install.sh
+    if [[ ! -x /opt/agy/bin/agy ]]; then
+      for cand in /root/.local/bin/agy /root/.gemini/bin/agy /usr/local/bin/agy "$(command -v agy || true)"; do
+        if [[ -n "$cand" && -x "$cand" ]]; then
+          cp -a "$cand" /opt/agy/bin/agy
+          break
+        fi
+      done
+    fi
+    [[ -x /opt/agy/bin/agy ]] || { echo "agy CLI not found after install" >&2; exit 1; }
+    chmod 755 /opt/agy/bin/agy
+
+    echo "Fetching Obsidian AppImage..."
+    curl -fL "$OBSIDIAN_APPIMAGE_URL" -o /opt/obsidian/Obsidian.AppImage
+    chmod 755 /opt/obsidian/Obsidian.AppImage
+
+    echo "Building antigravity-add-model (OpenRouter BYOK proxy)..."
+    git clone "$ADD_MODEL_GIT" /opt/antigravity-add-model
+    cd /opt/antigravity-add-model
+    git checkout "$ADD_MODEL_REF"
+    npm ci
+    npm run build
+
+    install -m 0755 /opt/agy-stack/host-scripts/openrouter-proxy.sh /usr/local/bin/openrouter-proxy
+    install -m 0755 /opt/agy-stack/host-scripts/agy.sh /usr/local/bin/agy
+    install -m 0755 /opt/agy-stack/host-scripts/antigravity-ide.sh /usr/local/bin/antigravity-ide
+    install -m 0755 /opt/agy-stack/host-scripts/obsidian-stack.sh /usr/local/bin/obsidian-stack
+
+    dnf clean all
+    rm -rf /var/cache/dnf /tmp/*
+
+%environment
+    export LC_ALL=C.UTF-8
+    export CLOUD_CODE_URL=http://127.0.0.1:50999
+    export PATH=/usr/local/bin:/opt/agy/bin:$PATH
+
+%runscript
+    echo "agy-stack-box image — use ./scripts/*.sh from the git checkout"
+    exec /bin/bash "$@"

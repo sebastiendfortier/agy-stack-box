@@ -1,0 +1,46 @@
+{
+  "models": [
+    {
+      "name": "models/openrouter-auto",
+      "displayName": "OpenRouter Auto",
+      "provider": "openrouter",
+      "apiFormat": "openai",
+      "apiUrl": "https://openrouter.ai/api/v1/chat/completions",
+      "apiKey": "{{OPENROUTER_API_KEY}}",
+      "externalModelName": "openrouter/auto",
+      "enabled": true,
+      "contextWindow": 200000,
+      "maxOutputTokens": 16384,
+      "timeout": 180000,
+      "maxRetries": 2
+    },
+    {
+      "name": "models/openrouter-gemini-2.5-pro",
+      "displayName": "OpenRouter Gemini 2.5 Pro",
+      "provider": "openrouter",
+      "apiFormat": "openai",
+      "apiUrl": "https://openrouter.ai/api/v1/chat/completions",
+      "apiKey": "{{OPENROUTER_API_KEY}}",
+      "externalModelName": "google/gemini-2.5-pro",
+      "enabled": true,
+      "contextWindow": 1048576,
+      "maxOutputTokens": 65536,
+      "timeout": 180000,
+      "maxRetries": 2
+    },
+    {
+      "name": "models/openrouter-claude-sonnet-4.5",
+      "displayName": "OpenRouter Claude Sonnet 4.5",
+      "provider": "openrouter",
+      "apiFormat": "openai",
+      "apiUrl": "https://openrouter.ai/api/v1/chat/completions",
+      "apiKey": "{{OPENROUTER_API_KEY}}",
+      "externalModelName": "anthropic/claude-sonnet-4.5",
+      "enabled": true,
+      "contextWindow": 200000,
+      "maxOutputTokens": 64000,
+      "timeout": 180000,
+      "maxRetries": 2
+    }
+  ]
+}

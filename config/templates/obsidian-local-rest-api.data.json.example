@@ -1,0 +1,6 @@
+{
+  "port": 27124,
+  "insecurePort": 27123,
+  "enableInsecureServer": true,
+  "apiKey": "REPLACE_WITH_SAME_VALUE_AS_OBSIDIAN_API_KEY"
+}

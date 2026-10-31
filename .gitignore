@@ -1,0 +1,17 @@
+# Local runtime / secrets (never commit)
+state/
+*.sif
+*.img
+*.tar.gz
+*.AppImage
+secrets.env
+.env
+**/custom_models.json
+!**/*.tmpl
+!**/*.example
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
