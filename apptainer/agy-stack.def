@@ -95,7 +95,8 @@ From: rockylinux:9
     install -m 0755 /opt/agy-stack/host-scripts/obsidian-stack.sh /usr/local/bin/obsidian-stack
 
     dnf clean all
-    rm -rf /var/cache/dnf /tmp/*
+    # Never `rm -rf /tmp/*` — under fakeroot /tmp is bind-mounted from the host.
+    rm -rf /var/cache/dnf /tmp/antigravity-ide.tar.gz /tmp/agy-install.sh
 
 %environment
     export LC_ALL=C.UTF-8
