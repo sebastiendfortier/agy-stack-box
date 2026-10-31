@@ -23,6 +23,16 @@ cd agy-stack-box
 - Disk for a multi‑GB SIF + Electron state
 - An Obsidian vault on the host with **Local REST API** installed (API key will match `OBSIDIAN_API_KEY`)
 
+#### Ubuntu 24.04 local builds
+
+Ubuntu sets `kernel.apparmor_restrict_unprivileged_userns=1`, which breaks `singularity build --fakeroot` (`mount namespace requires privileges`). One-time fix (sudo):
+
+```bash
+./scripts/enable-local-build.sh
+```
+
+Then `./scripts/build-sif.sh` works as your normal user.
+
 ### 1. Configure (secrets stay local)
 
 ```bash
@@ -38,12 +48,11 @@ Never commit `state/` or `secrets.env`.
 
 ### 2. Build the image
 
-Build needs network plus root or a working user-namespace/`--fakeroot` install (or `singularity build --remote` if your site provides a builder):
+Build needs network. Prefer fakeroot after `./scripts/enable-local-build.sh`:
 
 ```bash
-./scripts/build-sif.sh
-# equivalent:
-#   cd apptainer && singularity build agy-stack.sif agy-stack.def
+./scripts/enable-local-build.sh   # once on Ubuntu 24.04+
+./scripts/build-sif.sh            # uses singularity/apptainer build --fakeroot
 ```
 
 Pinned inside the definition (edit `apptainer/agy-stack.def` `%post` to bump):
