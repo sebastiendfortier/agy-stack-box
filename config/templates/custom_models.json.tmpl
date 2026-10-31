@@ -41,6 +41,20 @@
       "maxOutputTokens": 64000,
       "timeout": 180000,
       "maxRetries": 2
+    },
+    {
+      "name": "models/local-qwen",
+      "displayName": "HPC Qwen (local)",
+      "provider": "openai",
+      "apiFormat": "openai",
+      "apiUrl": "{{QWEN_BASE_URL}}/v1/chat/completions",
+      "apiKey": "local",
+      "externalModelName": "{{QWEN_MODEL}}",
+      "enabled": false,
+      "contextWindow": 131072,
+      "maxOutputTokens": 16384,
+      "timeout": 300000,
+      "maxRetries": 1
     }
   ]
 }

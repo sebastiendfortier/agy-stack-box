@@ -30,3 +30,4 @@ copy_if_missing "$SEED_DIR/agent-sessions/README.md" "$VAULT/agent-sessions/READ
 
 info "Vault ready: $VAULT"
 info "  setup/ (plan, questionnaire, profile) + glossary/ + agent-sessions/ + adrs/ + lessons/ + runbooks/"
+

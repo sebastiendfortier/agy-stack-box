@@ -103,6 +103,9 @@ replacements = {
     "{{VAULT_IN_CONTAINER}}": os.environ.get("VAULT_IN_CONTAINER", "/vault"),
     "{{PROXY_PORT}}": os.environ["PROXY_PORT"],
     "{{OBSIDIAN_REST_PORT}}": os.environ["OBSIDIAN_REST_PORT"],
+    # Optional local Qwen endpoint (HPC); rendering still works when unset.
+    "{{QWEN_BASE_URL}}": os.environ.get("QWEN_BASE_URL", "http://127.0.0.1:8000"),
+    "{{QWEN_MODEL}}": os.environ.get("QWEN_MODEL", "qwen"),
 }
 for key, value in replacements.items():
     text = text.replace(key, value)
