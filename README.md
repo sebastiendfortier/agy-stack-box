@@ -29,6 +29,7 @@ Skip `enable-local-build.sh` and bridge mode. Prefer building the SIF on a lapto
 ./scripts/setup-config.sh
 ./scripts/fetch-apps.sh
 ./scripts/fetch-skills.sh     # ponytail + caveman into state/ (+ host Cursor/agy when WIRE_HOST=1)
+./scripts/seed-cmc-profile.sh # CMC modes + profile; prefers vault, falls back to harness/
 ./scripts/start-services.sh   # AGY_NET_MODE=host by default — no sudo
 ```
 
@@ -52,6 +53,7 @@ Ubuntu 24.04+ sets `kernel.apparmor_restrict_unprivileged_userns=1`, which break
 ./scripts/setup-config.sh          # render custom_models + MCP + IDE settings
 ./scripts/fetch-apps.sh            # download IDE + Obsidian + agy into state/apps (~0.5GB+)
 ./scripts/fetch-skills.sh          # ponytail + caveman for CLI/IDE (and host Cursor if present)
+./scripts/seed-cmc-profile.sh      # CMC profile/modes; vault first, then harness/
 ```
 
 Never commit `state/` or `secrets.env`.
@@ -67,6 +69,14 @@ With `WIRE_HOST=1` (default) it also wires the **host** account:
 - **Antigravity IDE:** skills + `AGENTS.md` / `GEMINI.md.d` always-on text
 
 Set `WIRE_HOST=0` to only refresh `state/`. Defaults live in `~/.config/ponytail/config.json` and `~/.config/caveman/config.json`.
+
+### CMC harness (vault optional)
+
+`harness/` holds tracked copies of the CMC plan, questionnaire (`status: partial`), profile, glossary stub, and `agent-sessions/` template. `seed-cmc-profile.sh` writes the always-on `GEMINI.md.d/cmc-profile.md`, the `cmc-profile` skill, the Architect/Code/Ops/Science/Docs agents, and references for the glossary + plan.
+
+Source order: vault (`$VAULT_HOST_PATH`) first, then `harness/`. Overrides: `CMC_VAULT_ROOT`, `CMC_PROFILE_SRC`, `CMC_GLOSSARY_SRC`, `CMC_SEED_DIR`. When the vault exists, the script also scaffolds `agent-sessions/`, `glossary/`, `adrs/`, `lessons/`, `runbooks/` and only seeds missing stubs.
+
+Redact hostnames, queues, absolute HPC paths, and secrets before committing changes under `harness/` — this repo may be public.
 
 ### 2. Get the slim image
 
@@ -102,6 +112,7 @@ OpenRouter entries in the native picker / `agy models`:
 apptainer/agy-stack.def          # image definition
 apptainer/rootfs-scripts/        # in-image wrappers (agy, ide, proxy, obsidian)
 scripts/                         # host orchestration (incl. fetch-skills.sh)
+harness/                         # tracked CMC plan/profile/glossary/agent-sessions seed
 config/templates/                # secret-free templates
 state/                           # local only (gitignored): apps, gemini, secrets
 ```

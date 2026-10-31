@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # Seed CMC / ECCC agent profile into agy-stack state/ (and host ~/.gemini when WIRE_HOST=1).
-# Source of truth: KnowledgeBase/CodeVault/setup/cmc-profile/ (+ this script's embeds).
+# Source of truth: KnowledgeBase/CodeVault/setup/cmc-profile/.
+# Fallback: harness/ in this repo, so a fresh clone on HPC works without a vault.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
 WIRE_HOST="${WIRE_HOST:-1}"
-VAULT_CMC="${CMC_PROFILE_SRC:-$HOME/KnowledgeBase/CodeVault/setup/cmc-profile}"
-VAULT_GLOSSARY="${CMC_GLOSSARY_SRC:-$HOME/KnowledgeBase/CodeVault/glossary}"
+SEED_DIR="${CMC_SEED_DIR:-$ROOT/harness}"
+VAULT_ROOT="${CMC_VAULT_ROOT:-${VAULT_HOST_PATH:-$HOME/KnowledgeBase/CodeVault}}"
+VAULT_CMC="${CMC_PROFILE_SRC:-$VAULT_ROOT/setup/cmc-profile}"
+VAULT_GLOSSARY="${CMC_GLOSSARY_SRC:-$VAULT_ROOT/glossary}"
+PROFILE_SRC="$VAULT_CMC"
+[[ -f "$PROFILE_SRC/AGENTS.md" ]] || PROFILE_SRC="$SEED_DIR/cmc-profile"
+GLOSSARY_SRC="$VAULT_GLOSSARY"
+[[ -d "$GLOSSARY_SRC" ]] || GLOSSARY_SRC="$SEED_DIR/glossary"
+PLAN_SRC="$VAULT_ROOT/setup/CMC-Harness-Plan.md"
+[[ -f "$PLAN_SRC" ]] || PLAN_SRC="$SEED_DIR/CMC-Harness-Plan.md"
 
 mkdir -p \
   "$STATE_DIR/gemini/GEMINI.md.d" \
@@ -43,12 +52,15 @@ Workstation: OpenRouter BYOK OK. HPC: prefer local Qwen; do not assume egress. W
 
 ## Memory → Obsidian CodeVault
 `agent-sessions/`, `glossary/`, `adrs/`, `lessons/`, `runbooks/`. Session end: short summary note.
+Plan / questionnaire: `harness/` in agy-stack-box; vault copies under `setup/` (questionnaire status: partial).
 EOF
 
 # --- Full profile copy (reference) ---
-if [[ -f "$VAULT_CMC/AGENTS.md" ]]; then
-  cp -a "$VAULT_CMC/AGENTS.md" "$STATE_DIR/gemini/antigravity/skills/cmc-profile/AGENTS.md"
-  cp -a "$VAULT_CMC/AGENTS.md" "$STATE_DIR/gemini/config/skills/cmc-profile/AGENTS.md"
+if [[ -f "$PROFILE_SRC/AGENTS.md" ]]; then
+  cp -a "$PROFILE_SRC/AGENTS.md" "$STATE_DIR/gemini/antigravity/skills/cmc-profile/AGENTS.md"
+  cp -a "$PROFILE_SRC/AGENTS.md" "$STATE_DIR/gemini/config/skills/cmc-profile/AGENTS.md"
+else
+  info "warning: no CMC profile AGENTS.md in $VAULT_CMC or $SEED_DIR/cmc-profile"
 fi
 
 cat >"$STATE_DIR/gemini/antigravity/skills/cmc-profile/SKILL.md" <<'EOF'
@@ -110,10 +122,30 @@ Teaching / explanatory. English default; French when asked or when audience is F
 Runbooks, ADRs, bilingual PR/commit text.
 Soften ponytail/caveman. Write into CodeVault when lasting.'
 
-# --- Glossary pointer ---
+# --- Glossary + plan pointers ---
 mkdir -p "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs"
-if [[ -d "$VAULT_GLOSSARY" ]]; then
-  cp -a "$VAULT_GLOSSARY/." "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs/" 2>/dev/null || true
+if [[ -d "$GLOSSARY_SRC" ]]; then
+  cp -a "$GLOSSARY_SRC/." "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs/" 2>/dev/null || true
+fi
+if [[ -f "$PLAN_SRC" ]]; then
+  cp -a "$PLAN_SRC" "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs/CMC-Harness-Plan.md"
+fi
+
+# --- Vault scaffold (only when the vault exists; repo harness/ works stand-alone) ---
+seed_if_missing() {
+  local src="$1" dest="$2"
+  [[ -f "$src" && ! -e "$dest" ]] || return 0
+  mkdir -p "$(dirname "$dest")"
+  cp -a "$src" "$dest"
+  info "seeded $dest"
+}
+
+if [[ -d "$VAULT_ROOT" ]]; then
+  mkdir -p "$VAULT_ROOT"/{agent-sessions,glossary,adrs,lessons,runbooks}
+  seed_if_missing "$SEED_DIR/agent-sessions/README.md" "$VAULT_ROOT/agent-sessions/README.md"
+  seed_if_missing "$SEED_DIR/glossary/MODEX-WINGS.md" "$VAULT_ROOT/glossary/MODEX-WINGS.md"
+else
+  info "No vault at $VAULT_ROOT — using repo harness/ only (set VAULT_HOST_PATH to scaffold a vault)"
 fi
 
 # Ensure GEMINI.md mentions CMC if missing
@@ -146,4 +178,6 @@ fi
 info "CMC profile seeded:"
 info "  $STATE_DIR/gemini/GEMINI.md.d/cmc-profile.md"
 info "  skills/cmc-profile + agents: architect code ops science docs"
-info "  vault source: $VAULT_CMC"
+info "  profile source: $PROFILE_SRC"
+info "  glossary source: $GLOSSARY_SRC"
+info "  vault: $VAULT_ROOT"
