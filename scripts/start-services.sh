@@ -17,14 +17,29 @@ for req in \
   [[ -e "$req" ]] || die "missing $req — run ./scripts/fetch-apps.sh first"
 done
 
+# AGY_NET_MODE=host (default): share host netns; proxy/Obsidian still bind 127.0.0.1
+#   (LAN-safe, no sudo, OpenRouter egress works).
+# AGY_NET_MODE=bridge: Singularity CNI private net (strict). On Ubuntu Singularity CE
+#   this often needs: sudo singularity instance start ... and may still lack egress.
+NET_MODE="${AGY_NET_MODE:-host}"
+
 if ! instance_running "$RT" "$INSTANCE_NAME"; then
-  info "Starting instance '$INSTANCE_NAME' with private network..."
-  # --net: separate netns (loopback services stay off the LAN).
-  # bridge provides NAT egress for OpenRouter HTTPS.
-  start_args=(
-    instance start
-    --net
-    --network bridge
+  info "Starting instance '$INSTANCE_NAME' (AGY_NET_MODE=$NET_MODE)..."
+  start_args=(instance start)
+  case "$NET_MODE" in
+    bridge)
+      start_args+=(--net --network bridge)
+      # systemd-resolved stub is unreachable inside a netns
+      DNS_FILE="$STATE_DIR/resolv.conf"
+      if [[ ! -f "$DNS_FILE" ]]; then
+        printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' >"$DNS_FILE"
+      fi
+      start_args+=(--bind "$DNS_FILE:/etc/resolv.conf")
+      ;;
+    host) ;;
+    *) die "AGY_NET_MODE must be host or bridge (got: $NET_MODE)" ;;
+  esac
+  start_args+=(
     --bind "$STATE_DIR:$STATE_IN_CONTAINER"
     --bind "$VAULT_HOST_PATH:$VAULT_IN_CONTAINER"
   )
@@ -42,8 +57,15 @@ if ! instance_running "$RT" "$INSTANCE_NAME"; then
   start_args+=(--env "AGY_STATE=$STATE_IN_CONTAINER")
   start_args+=(--env "VAULT_PATH=$VAULT_IN_CONTAINER")
 
-  if ! "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME"; then
-    die "instance start with --net/--network bridge failed. On some hosts you need fakeroot/root or CNI packages. See README."
+  if [[ "$NET_MODE" == bridge ]]; then
+    if ! "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME"; then
+      info "unprivileged bridge start failed; retrying with sudo..."
+      sudo "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \
+        || die "bridge instance start failed even with sudo. Use AGY_NET_MODE=host or fix CNI/iptables."
+    fi
+  else
+    "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \
+      || die "instance start failed"
   fi
   echo "$INSTANCE_NAME" >"$STATE_DIR/instance.name"
 else

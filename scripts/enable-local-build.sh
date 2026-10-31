@@ -66,9 +66,27 @@ print("singularity.conf network ACL updated")
 PY
 fi
 
+# CNI plugins often look for iptables on a short PATH (need /usr/bin, not only /usr/sbin).
+for b in iptables iptables-restore iptables-save ip6tables ip6tables-restore ip6tables-save; do
+  if [[ -x "/usr/sbin/$b" && ! -e "/usr/bin/$b" ]]; then
+    "${SUDO[@]}" ln -sfn "/usr/sbin/$b" "/usr/bin/$b"
+  fi
+done
+
 echo
-echo "You can now build:"
+echo "One-time host setup done."
+echo
+echo "Sudo later?"
+echo "  - Build SIF (fakeroot): no sudo, after this script."
+echo "  - Private-net (--network bridge): on many Ubuntu desktops Singularity CE still"
+echo "    cannot run CNI iptables as a normal user (exit 111). Then each"
+echo "    'instance start --net' needs: sudo singularity instance start ..."
+echo "    Well-configured Apptainer/HPC sites with working allow-net usually need"
+echo "    NO daily sudo after this one-time ACL."
+echo "  - Fallback: AGY_NET_MODE=host (shared host net, services bind 127.0.0.1 only)"
+echo "    needs no sudo and keeps ports off the LAN."
+echo
+echo "Next:"
 echo "  ./scripts/build-sif.sh"
-echo "  # or: singularity build --fakeroot apptainer/agy-stack.sif apptainer/agy-stack.def"
-echo
-echo "Private-net instances also need the CNI ACL above (re-run this script with sudo if start-services fails on --network bridge)."
+echo "  ./scripts/fetch-apps.sh"
+echo "  AGY_NET_MODE=host ./scripts/start-services.sh   # recommended on Ubuntu CE for now"
