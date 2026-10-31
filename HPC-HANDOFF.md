@@ -1,115 +1,126 @@
-# HPC handoff
+# HPC handoff (next open)
 
-State: Phase 0 of `harness/CMC-Harness-Plan.md` is closed. Two local commits
-(`efb4118`, `015c500`, plus this handoff) carry the tracked harness seeds and
-the vault bootstrap. No workstation vault is required on HPC.
+**This session ends on the workstation.** Next time you open the agent: you are on
+HPC after cloning this repo. MalSteam II / Android / ONN stay on the workstation —
+do not expect `adb` or `Documents/malsteam-ii` on the cluster.
 
-## 1. Clone
+State: Phase 0 of `harness/CMC-Harness-Plan.md` closed. App 2.0 is wired into
+`fetch-apps.sh` / `start-app.sh`. CMC profile + frontmatter agents are seedable.
+
+## 0. Before you leave the workstation (do once)
+
+```bash
+cd ~/src/agy-stack-box
+git status   # commit App 2.0 + seed changes if not pushed yet
+git push origin main
+
+# Pre-stage bulky apps + SIF for scp/rsync (login nodes often lack egress)
+ls -lh apptainer/agy-stack.sif state/apps/antigravity-app state/apps/antigravity-ide state/apps/agy state/apps/obsidian
+```
+
+Optional pack (run on workstation, then copy the tarball):
+
+```bash
+tar -C ~/src/agy-stack-box -cvf /tmp/agy-stack-apps.tar \
+  apptainer/agy-stack.sif state/apps
+# scp /tmp/agy-stack-apps.tar <hpc>:
+```
+
+## 1. Clone on HPC
 
 ```bash
 git clone https://github.com/sebastiendfortier/agy-stack-box.git
 cd agy-stack-box
 ```
 
-Requires: `apptainer` or `singularity` (CE 3.11+), X11/Wayland for GUI (or
-ThinLinc/VNC/`ssh -X`), `node` + `npx` for `fetch-skills.sh`, disk under
-`state/` (~1 GB), no sudo.
+Requires: `apptainer` or `singularity` (CE 3.11+), X11/Wayland or ThinLinc/VNC/`ssh -X`
+for GUI, `node`+`npx` for skills (or skip host wire), disk under `state/` (~2 GB with
+App 2.0), **no sudo**. Prefer a personal interactive node (loopback proxy is
+reachable by other users on a shared login node).
 
-## 2. Reach the apps and image
-
-Pick one path per component.
-
-SIF:
+## 2. Image + apps
 
 ```bash
-# A. copy the prebuilt image from the workstation
-scp workstation:src/agy-stack-box/apptainer/agy-stack.sif apptainer/
+# SIF: copy prebuilt OR build
+# scp workstation:.../apptainer/agy-stack.sif apptainer/
+# OR: ./scripts/build-sif.sh
 
-# B. or build on the cluster (no sudo)
-./scripts/build-sif.sh
+# Apps: rsync/tar from workstation OR fetch if egress works
+# tar xf ~/agy-stack-apps.tar   # if you packed in step 0
+# OR: ./scripts/fetch-apps.sh   # IDE + App 2.0 + Obsidian + agy
 ```
 
-Apps (IDE, Obsidian, `agy`) — if the login node has no egress:
+Confirm:
 
 ```bash
-# on the workstation
-rsync -a --relative src/agy-stack-box/state/apps user@hpc:src/agy-stack-box/state/
+test -x state/apps/antigravity-app/Antigravity-x64/antigravity && echo APP_OK
+test -x "state/apps/antigravity-ide/Antigravity IDE/antigravity-ide" && echo IDE_OK
+test -x state/apps/agy/agy && echo AGY_OK
 ```
 
-Otherwise run `./scripts/fetch-apps.sh` on a node with internet.
-
-## 3. Configure
+## 3. Configure (CMC-safe)
 
 ```bash
-./scripts/setup-config.sh          # run 1: creates state/secrets.env (mode 600)
-$EDITOR state/secrets.env          # OPENROUTER_API_KEY, OBSIDIAN_API_KEY, VAULT_HOST_PATH
-./scripts/setup-config.sh          # run 2: renders configs + bootstraps the vault
+export WIRE_HOST=0                 # don't overwrite random host ~/.gemini on shared nodes
+./scripts/setup-config.sh          # creates state/secrets.env (mode 600)
+$EDITOR state/secrets.env
+# Required: OPENROUTER_API_KEY, OBSIDIAN_API_KEY, VAULT_HOST_PATH (absolute, no ~)
+# Optional HPC: QWEN_BASE_URL, QWEN_MODEL  then re-run setup-config to enable local-qwen
+# Leave PROXY_PORT unset → per-uid defaults
+./scripts/setup-config.sh          # render + bootstrap vault from harness/
 ```
 
-- `VAULT_HOST_PATH` must be an absolute path (no `~`). Any writable directory
-  works; `setup-config.sh` creates it and seeds `setup/`, `glossary/`,
-  `agent-sessions/`, `adrs/`, `lessons/`, `runbooks/` from `harness/`.
-- Keep ports unset in `secrets.env` on a shared node; per-uid defaults apply.
-- Never commit `state/` or `secrets.env`.
+Never commit `state/` or `secrets.env`. Redact `<LOGIN_NODE>`, `<QUEUE>`, `<SITESTORE>`
+in chats that leave the machine.
 
 ## 4. Skills + CMC profile
 
 ```bash
-./scripts/fetch-skills.sh          # ponytail + caveman into state/, host mirrors when WIRE_HOST=1
-./scripts/seed-cmc-profile.sh      # vault first, harness/ fallback
+WIRE_HOST=0 ./scripts/fetch-skills.sh
+WIRE_HOST=0 ./scripts/seed-cmc-profile.sh
+find state/gemini -path '*cmc-profile*' -type f | head
+ls state/gemini/config/agents   # architect code ops science docs (YAML frontmatter)
 ```
 
-`WIRE_HOST=0` keeps everything inside `state/`. Inspect what was written:
+## 5. Run on HPC
 
 ```bash
-find state/gemini -path '*cmc-profile*' -type f
-```
-
-## 5. Run
-
-```bash
-./scripts/start-services.sh        # instance + proxy + Obsidian, host net, no sudo
-./scripts/start-ide.sh             # GUI terminal
-./scripts/start-cli.sh             # agy, default custom-openrouter-auto
+./scripts/start-services.sh        # instance + proxy + Obsidian
+./scripts/start-app.sh             # App 2.0 — multi-agent / plans
+./scripts/start-ide.sh             # IDE — edit code
+./scripts/start-cli.sh             # agy TUI
 ./scripts/stop.sh
+```
+
+First App/IDE project on HPC should be **this repo** or a CMC worktree under
+sitestore — not MalSteam.
+
+## 6. First HPC agent prompt (paste)
+
+```text
+Architect mode. We just cloned agy-stack-box on HPC (no sudo).
+Read HPC-HANDOFF.md + harness/CMC-Harness-Plan.md.
+1) Verify proxy health and that cmc-profile agents exist.
+2) Discover (placeholders only in output): sitestore, scratch, scheduler (PBS vs Slurm), cmds-agent-mcp if present.
+3) Propose Phase 1 hooks + enable local Qwen if QWEN_* set — no mass job submit, no prod paths.
 ```
 
 ## Verify
 
 ```bash
-# proxy health (port from the startup output / uid formula)
-curl -fsS http://127.0.0.1:<PROXY_PORT>/healthz
-
-# vault was seeded
+curl -fsS http://127.0.0.1:${PROXY_PORT:-33000}/healthz
 ls "$VAULT_HOST_PATH/setup" "$VAULT_HOST_PATH/agent-sessions"
-
-# profile landed
-ls state/gemini/antigravity/skills/cmc-profile state/gemini/config/agents
 ```
 
-## Known gaps (from review)
+## Known gaps
 
-1. Proxy port is predictable (`30000 + uid%10000*3`) and the proxy has no token
-   of its own. On a shared login node other users can reach loopback ports.
-   Prefer a personal interactive node until this is tightened.
-2. `fetch-apps.sh` downloads without checksum pinning.
-3. Host `/usr` overlay hides the SIF's Node; the proxy needs host Node. Not
-   listed in prerequisites yet.
-4. `seed-cmc-profile.sh` with `WIRE_HOST=1` overwrites host `~/.gemini/GEMINI.md`.
-5. HPC Qwen is scaffolded but disabled: set `QWEN_BASE_URL` / `QWEN_MODEL` in
-   `state/secrets.env`, re-run `setup-config.sh`, then enable `models/local-qwen`.
-6. No CI or shell tests yet.
-
-## Next actions
-
-- Phase 1: document CMC vs personal profile switching; add no-force-push and
-  destructive-confirm hooks; session summary to vault.
-- Phase 2: discover sitestore/scratch and `cmds-agent-mcp`; add local Qwen model
-  entry; retry MarimoHub rootless k3s plan.
-- Ask before production paths, mass job submission, or `rm -rf`; never force-push.
+1. Predictable loopback proxy ports on shared nodes — prefer personal node.
+2. `fetch-apps.sh` has no checksum pins yet.
+3. Host `/usr` overlay needs host Node for the BYOK proxy.
+4. `WIRE_HOST=1` overwrites host `GEMINI.md` — use `WIRE_HOST=0` on HPC.
+5. Local Qwen scaffolded via `QWEN_BASE_URL` / `QWEN_MODEL`.
 
 ## Safety
 
-Keep hostnames, queue names, absolute HPC paths, secrets, and pre-release
-products out of prompts and out of this repo. Use placeholders: `<LOGIN_NODE>`,
-`<QUEUE>`, `<SITESTORE>`.
+No secrets/PII/pre-release products/infra fingerprints to external models.
+Confirm before `rm -rf`, mass `qsub`/`sbatch`, production paths. Never force-push.

@@ -3,7 +3,7 @@
 A **slim** Singularity / Apptainer image (~runtime only) plus host-fetched apps under `state/apps/`:
 
 - **In the SIF:** OpenRouter BYOK proxy + Node + Electron shared libs
-- **In `state/apps/` (via `fetch-apps.sh`):** Antigravity IDE, Obsidian AppImage, `agy` CLI
+- **In `state/apps/` (via `fetch-apps.sh`):** Antigravity IDE, Antigravity App 2.0, Obsidian AppImage, `agy` CLI
 
 Proxy and Obsidian REST bind loopback only. Default networking is **host net** (`AGY_NET_MODE=host`) — **no sudo**. Ports and instance name default **per-uid** so multiple users on one node do not collide.
 
@@ -96,7 +96,8 @@ Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App URLs are in `scripts
 
 ```bash
 ./scripts/start-services.sh        # instance + proxy + Obsidian (no sudo)
-./scripts/start-ide.sh             # another terminal
+./scripts/start-ide.sh             # Antigravity IDE (edit + agent)
+./scripts/start-app.sh             # Antigravity App 2.0 (multi-agent desktop, no IDE)
 ./scripts/start-cli.sh             # defaults to --model custom-openrouter-auto
 ./scripts/start-cli.sh models
 ./scripts/stop.sh

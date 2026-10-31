@@ -18,6 +18,20 @@ case "$name" in
       if [[ -d "$c" ]]; then echo "$c"; exit 0; fi
     done
     ;;
+  app)
+    for c in \
+      "$STATE/apps/antigravity-app/Antigravity-x64/antigravity" \
+      "/opt/antigravity-app/Antigravity-x64/antigravity"; do
+      if [[ -x "$c" ]]; then echo "$c"; exit 0; fi
+    done
+    ;;
+  app-dir)
+    for c in \
+      "$STATE/apps/antigravity-app/Antigravity-x64" \
+      "/opt/antigravity-app/Antigravity-x64"; do
+      if [[ -d "$c" ]]; then echo "$c"; exit 0; fi
+    done
+    ;;
   agy)
     for c in "$STATE/apps/agy/agy" /opt/agy/bin/agy; do
       if [[ -x "$c" ]]; then echo "$c"; exit 0; fi

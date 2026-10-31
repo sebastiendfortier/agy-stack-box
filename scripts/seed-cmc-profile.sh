@@ -88,41 +88,25 @@ EOF
 cp -a "$STATE_DIR/gemini/antigravity/skills/cmc-profile/SKILL.md" \
   "$STATE_DIR/gemini/config/skills/cmc-profile/SKILL.md"
 
-# --- Named mode agents ---
-write_agent() {
-  local name="$1" body="$2"
-  printf '%s\n' "$body" >"$STATE_DIR/gemini/config/agents/${name}.md"
-  printf '%s\n' "$body" >"$STATE_DIR/gemini/antigravity/agents/${name}.md"
-}
-
-write_agent architect '# Architect mode
-Plan first. Ask clarifying questions. Prefer /grill-me style alignment.
-No mass file edits until the user accepts the plan.
-Capture the plan in Obsidian `adrs/` or `runbooks/` when non-trivial.
-Redact HPC fingerprints. Tone: structured, not caveman-short on the plan itself.'
-
-write_agent code '# Code mode
-Implement the accepted plan on a feature branch.
-Readable, human-maintainable diffs. Ponytail laziness: smallest complete change.
-Do not force-push. Batch-approve OK on feature branches.
-Soft-fail: if FR/EN comments conflict, ask once.'
-
-write_agent ops '# Ops mode
-Diagnose → propose fix → wait for explicit OK before applying.
-Domains: PBS/Slurm jobs, rootless k3s, pixi/sitestore, FreeIPA auth, quotas.
-Never mass-submit jobs, touch production paths, or `rm -rf` without confirm.
-Prefer local Qwen on HPC; no assume egress.
-Log outcome to `agent-sessions/`.'
-
-write_agent science '# Science mode
-GRIB/NetCDF/FST/icechunk/xarray careful handling.
-Validate / dry-run before mutate. Preserve bit-reproducibility and golden tests.
-Teaching tone when explaining formats. Soften caveman.'
-
-write_agent docs '# Docs mode
-Teaching / explanatory. English default; French when asked or when audience is FR.
-Runbooks, ADRs, bilingual PR/commit text.
-Soften ponytail/caveman. Write into CodeVault when lasting.'
+# --- Named mode agents (YAML frontmatter required for invoke_subagent) ---
+AGENTS_SRC="${CMC_AGENTS_SRC:-}"
+if [[ -z "$AGENTS_SRC" ]]; then
+  if [[ -d "$VAULT_CMC/agents" ]]; then
+    AGENTS_SRC="$VAULT_CMC/agents"
+  elif [[ -d "$ROOT/harness/cmc-profile/agents" ]]; then
+    AGENTS_SRC="$ROOT/harness/cmc-profile/agents"
+  fi
+fi
+if [[ -n "${AGENTS_SRC:-}" && -d "$AGENTS_SRC" ]]; then
+  info "Seeding agents from $AGENTS_SRC"
+  for f in "$AGENTS_SRC"/*.md; do
+    [[ -f "$f" ]] || continue
+    cp -a "$f" "$STATE_DIR/gemini/config/agents/$(basename "$f")"
+    cp -a "$f" "$STATE_DIR/gemini/antigravity/agents/$(basename "$f")"
+  done
+else
+  info "No agents dir at vault/harness — keeping existing state agents if any"
+fi
 
 # --- Glossary + plan pointers ---
 mkdir -p "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs"

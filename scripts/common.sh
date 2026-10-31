@@ -212,7 +212,7 @@ host_path_binds() {
 prepare_stack_bin() {
   local d="$STATE_DIR/stack-bin" s
   mkdir -p "$d"
-  for s in agy antigravity-ide openrouter-proxy obsidian-stack; do
+  for s in agy antigravity-ide antigravity-app openrouter-proxy obsidian-stack; do
     cp -a "$ROOT/apptainer/rootfs-scripts/${s}.sh" "$d/$s"
     chmod +x "$d/$s"
   done
@@ -232,11 +232,14 @@ config_binds() {
   mkdir -p \
     "$STATE_DIR/gemini" \
     "$STATE_DIR/home/.config/Antigravity IDE" \
+    "$STATE_DIR/home/.config/Antigravity" \
     "$STATE_DIR/home/.config/obsidian" \
     "$HOST_HOME/.config" \
     "$HOST_HOME/.gemini"
   printf '%s\n' "$STATE_DIR/gemini:$HOST_HOME/.gemini"
   printf '%s\n' "$STATE_DIR/home/.config/Antigravity IDE:$HOST_HOME/.config/Antigravity IDE"
+  # Antigravity App 2.0 (Electron) userData
+  printf '%s\n' "$STATE_DIR/home/.config/Antigravity:$HOST_HOME/.config/Antigravity"
   printf '%s\n' "$STATE_DIR/home/.config/obsidian:$HOST_HOME/.config/obsidian"
 }
 
