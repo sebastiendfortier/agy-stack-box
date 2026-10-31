@@ -17,6 +17,31 @@ fi
 cd "$ROOT/apptainer"
 OUT="$ROOT/apptainer/agy-stack.sif"
 info "Building slim $OUT with $RT --fakeroot (IDE/Obsidian/agy stay in state/apps via fetch-apps.sh)..."
+
+# HPC sites often export APPTAINER_BIND / SINGULARITY_BIND* (home, scratch, project).
+# Those break *builds* (wrong mounts inside %post / fakeroot) but are wanted at *run*
+# time — start-services does not clear them. Clear bind-related vars only for build.
+# Safe no-op on laptops that never set them.
+unset_hpc_bind_env_for_build() {
+  local v
+  for v in \
+    APPTAINER_BIND SINGULARITY_BIND \
+    APPTAINER_BINDPATH SINGULARITY_BINDPATH \
+    APPTAINER_BIND_PATH SINGULARITY_BIND_PATH \
+    APPTAINER_BINDPREPEND SINGULARITY_BINDPREPEND \
+    APPTAINER_BINDAPPEND SINGULARITY_BINDAPPEND \
+    APPTAINER_HOME SINGULARITY_HOME \
+    APPTAINER_PWD SINGULARITY_PWD \
+    APPTAINER_WORKDIR SINGULARITY_WORKDIR \
+    APPTAINER_SCRATCHDIR SINGULARITY_SCRATCHDIR; do
+    if [[ -n "${!v:-}" ]]; then
+      info "build: unsetting $v (was set — typical HPC; kept for run)"
+      unset "$v"
+    fi
+  done
+}
+unset_hpc_bind_env_for_build
+
 # Prefer zstd via env (Singularity CE 3.11 has no --mksquashfs-args flag).
 export SINGULARITY_MKSQUASHFS_ARGS="${SINGULARITY_MKSQUASHFS_ARGS:--comp zstd -Xcompression-level 19}"
 export APPTAINER_MKSQUASHFS_ARGS="${APPTAINER_MKSQUASHFS_ARGS:-$SINGULARITY_MKSQUASHFS_ARGS}"

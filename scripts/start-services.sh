@@ -39,26 +39,14 @@ if ! instance_running "$RT" "$INSTANCE_NAME"; then
     host) ;;
     *) die "AGY_NET_MODE must be host or bridge (got: $NET_MODE)" ;;
   esac
-  start_args+=(--bind "$STATE_DIR:$STATE_IN_CONTAINER")
   while IFS= read -r b; do
     [[ -n "$b" ]] && start_args+=(--bind "$b")
-  done < <(vault_binds)
-  while IFS= read -r b; do
-    [[ -n "$b" ]] && start_args+=(--bind "$b")
-  done < <(config_binds)
-  while IFS= read -r b; do
-    [[ -n "$b" ]] && start_args+=(--bind "$b")
-  done < <(extra_binds)
-  while IFS= read -r b; do
-    [[ -n "$b" ]] && start_args+=(--bind "$b")
-  done < <(script_binds)
-  while IFS= read -r b; do
-    [[ -n "$b" ]] && start_args+=(--bind "$b")
-  done < <(display_binds)
+  done < <(all_instance_binds)
   while IFS= read -r b; do
     [[ -n "$b" ]] && start_args+=("$b")
   done < <(instance_home_args)
   instance_runtime_env start_args
+  info "Host tools: AGY_HOST_OS_TOOLS=${AGY_HOST_OS_TOOLS:-1} AGY_HOST_PATH_BINDS=${AGY_HOST_PATH_BINDS:-1} (PATH/modules passed through)"
 
   if [[ "$NET_MODE" == bridge ]]; then
     if ! "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME"; then

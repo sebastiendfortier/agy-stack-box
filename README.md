@@ -23,7 +23,7 @@ cd agy-stack-box
 
 #### HPC (no sudo)
 
-Skip `enable-local-build.sh` and bridge mode. Build the SIF on a laptop (or CI), copy `apptainer/agy-stack.sif` onto the cluster, then:
+Skip `enable-local-build.sh` and bridge mode. Prefer building the SIF on a laptop/CI, or on the cluster with `./scripts/build-sif.sh` (that script **unsets** `APPTAINER_BIND` / `SINGULARITY_BIND*` for the build only — HPC module binds often break `%post`; they stay in effect for `start-services` / run). Then:
 
 ```bash
 ./scripts/setup-config.sh
@@ -76,7 +76,7 @@ Laptop (with fakeroot enabled once):
 ./scripts/build-sif.sh            # does NOT embed IDE/Obsidian/agy
 ```
 
-HPC: copy a prebuilt `apptainer/agy-stack.sif` from your laptop/CI instead of building on the cluster.
+HPC: copy a prebuilt `apptainer/agy-stack.sif`, or build on-cluster with `build-sif.sh` (clears bind env for build only).
 
 Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App URLs are in `scripts/fetch-apps.sh`.
 
@@ -107,6 +107,20 @@ state/                           # local only (gitignored): apps, gemini, secret
 ```
 
 ## Networking model
+
+### What is isolated vs shared
+
+This is a **Singularity/Apptainer instance** (full Linux rootfs for the stack), not a chroot that shares the host `/usr`:
+
+| | Inside the instance |
+|---|---|
+| **Internet** | Shared with the host (`AGY_NET_MODE=host`) — OpenRouter/HTTPS work |
+| **Your files** | Real `$HOME` + vault binds; add scratch/projects via `AGY_EXTRA_BINDS` |
+| **OS tools** | Host `/usr` `/bin` `/lib*` overlaid by default (`AGY_HOST_OS_TOOLS=1`) |
+| **HPC modules / PATH** | Login `PATH`, `LD_LIBRARY_PATH`, `MODULEPATH`, … are passed in; those directories (and common roots like `/cvmfs`, `/scratch`) are bind-mounted (`AGY_HOST_PATH_BINDS=1`) so `module load` tools work in IDE terminals and `agy` |
+| **Stack apps** | IDE / Obsidian / `agy` / OpenRouter proxy from `state/apps` + SIF `/opt` |
+
+Site `APPTAINER_BIND` / `SINGULARITY_BIND*` still apply at **run**; `build-sif.sh` unsets them only while **building**.
 
 Default (`AGY_NET_MODE=host`, recommended for HPC and most desktops):
 

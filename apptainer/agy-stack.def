@@ -24,12 +24,14 @@ From: rockylinux:9
     NODE_VER='v22.14.0'
 
     # Do NOT run `dnf update` under fakeroot (filesystem RPM /dev chown fails).
+    # Keep git/ssh/diff in the *final* image — agents and IDE terminals need them.
+    # (Earlier builds removed git-core after npm build to save space; that broke workflows.)
     dnf -y install --allowerasing --setopt=install_weak_deps=False \
-      ca-certificates curl tar gzip which findutils git-core \
+      ca-certificates curl tar gzip which findutils git-core openssh-clients \
+      diffutils patch less procps-ng iproute \
       libX11 libXcomposite libXdamage libXext libXfixes libXrandr libxkbcommon \
       libxshmfence libdrm mesa-libGL mesa-libgbm nss nspr atk at-spi2-atk \
-      gtk3 pango cairo alsa-lib cups-libs libsecret \
-      procps-ng iproute
+      gtk3 pango cairo alsa-lib cups-libs libsecret
 
     # Official Node binary (smaller than Nodesource RPM + repo metadata)
     curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.gz" -o /tmp/node.tgz
@@ -66,11 +68,10 @@ From: rockylinux:9
     install -m 0755 /opt/agy-stack/host-scripts/antigravity-ide.sh /usr/local/bin/antigravity-ide
     install -m 0755 /opt/agy-stack/host-scripts/obsidian-stack.sh /usr/local/bin/obsidian-stack
 
-    # Remove build-only tooling from the image
-    dnf -y remove git-core || true
+    # Keep git/ssh; only drop dnf caches and docs to stay slim.
     dnf clean all
     rm -rf /var/cache/dnf /var/cache/yum /usr/share/doc /usr/share/man /usr/share/info \
-           /usr/share/licenses /tmp/node.tgz
+           /tmp/node.tgz
     # Drop unused locales (keep C/UTF-8)
     find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'C*' -exec rm -rf {} + 2>/dev/null || true
 
