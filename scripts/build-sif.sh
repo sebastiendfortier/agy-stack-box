@@ -16,7 +16,10 @@ fi
 
 cd "$ROOT/apptainer"
 OUT="$ROOT/apptainer/agy-stack.sif"
-info "Building $OUT with $RT --fakeroot (downloads IDE + Obsidian + npm deps; multi-GB)..."
+info "Building slim $OUT with $RT --fakeroot (IDE/Obsidian/agy stay in state/apps via fetch-apps.sh)..."
+# Prefer zstd via env (Singularity CE 3.11 has no --mksquashfs-args flag).
+export SINGULARITY_MKSQUASHFS_ARGS="${SINGULARITY_MKSQUASHFS_ARGS:--comp zstd -Xcompression-level 19}"
+export APPTAINER_MKSQUASHFS_ARGS="${APPTAINER_MKSQUASHFS_ARGS:-$SINGULARITY_MKSQUASHFS_ARGS}"
 # %files paths are relative to this directory
 "$RT" build --fakeroot --force "$OUT" agy-stack.def
 info "Built $OUT"

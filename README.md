@@ -1,13 +1,11 @@
 # agy-stack-box
 
-One **Singularity / Apptainer** image that runs, inside a **privately networked** instance:
+A **slim** Singularity / Apptainer image (~runtime only) plus host-fetched apps under `state/apps/`, all running inside a **privately networked** instance:
 
-- OpenRouter BYOK proxy ([antigravity-add-model](https://github.com/vahapogut/antigravity-add-model)) on `127.0.0.1:50999`
-- Obsidian AppImage + Local REST API on `127.0.0.1:27123` (vault bind-mounted)
-- Antigravity IDE 2.6.x (native Agent via `CLOUD_CODE_URL`)
-- `agy` CLI (same proxy / models)
+- **In the SIF:** OpenRouter BYOK proxy + Node + Electron shared libs
+- **In `state/apps/` (via `fetch-apps.sh`):** Antigravity IDE, Obsidian AppImage, `agy` CLI
 
-Host scripts only orchestrate the instance. Proxy and Obsidian ports are **not published** to the host or LAN; IDE and CLI `exec` into the same netns.
+Proxy and Obsidian REST stay on instance loopback only (`127.0.0.1:50999` / `:27123`).
 
 ## Clone on RHEL (or Ubuntu with Singularity CE)
 
@@ -42,24 +40,19 @@ Then `./scripts/build-sif.sh` works as your normal user.
 #   OBSIDIAN_API_KEY=...
 #   VAULT_HOST_PATH=/path/to/vault
 ./scripts/setup-config.sh          # render custom_models + MCP + IDE settings
+./scripts/fetch-apps.sh            # download IDE + Obsidian + agy into state/apps (~0.5GB+)
 ```
 
 Never commit `state/` or `secrets.env`.
 
-### 2. Build the image
-
-Build needs network. Prefer fakeroot after `./scripts/enable-local-build.sh`:
+### 2. Build the slim image
 
 ```bash
 ./scripts/enable-local-build.sh   # once on Ubuntu 24.04+
-./scripts/build-sif.sh            # uses singularity/apptainer build --fakeroot
+./scripts/build-sif.sh            # fakeroot + zstd; does NOT embed IDE/Obsidian/agy
 ```
 
-Pinned inside the definition (edit `apptainer/agy-stack.def` `%post` to bump):
-
-- Antigravity IDE **2.6.0** linux-x64
-- Obsidian **1.14.5** AppImage
-- `antigravity-add-model` @ `f793635`
+Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App URLs are in `scripts/fetch-apps.sh`.
 
 ### 3. Run
 
@@ -67,7 +60,7 @@ Pinned inside the definition (edit `apptainer/agy-stack.def` `%post` to bump):
 ./scripts/start-services.sh        # instance + proxy + Obsidian
 ./scripts/start-ide.sh             # another terminal
 ./scripts/start-cli.sh             # defaults to --model custom-openrouter-auto
-./scripts/start-cli.sh models      # list catalog (includes OpenRouter *)
+./scripts/start-cli.sh models
 ./scripts/stop.sh
 ```
 

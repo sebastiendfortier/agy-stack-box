@@ -9,6 +9,14 @@ load_secrets
 require_sif
 RT="$(resolve_runtime)"
 
+# Slim SIF expects large apps under state/apps
+for req in \
+  "$STATE_DIR/apps/antigravity-ide/Antigravity IDE/antigravity-ide" \
+  "$STATE_DIR/apps/agy/agy" \
+  "$STATE_DIR/apps/obsidian/Obsidian.AppImage"; do
+  [[ -e "$req" ]] || die "missing $req — run ./scripts/fetch-apps.sh first"
+done
+
 if ! instance_running "$RT" "$INSTANCE_NAME"; then
   info "Starting instance '$INSTANCE_NAME' with private network..."
   # --net: separate netns (loopback services stay off the LAN).

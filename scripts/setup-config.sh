@@ -53,4 +53,5 @@ if [[ ! -f "$VAULT_PLUGIN_DATA" ]]; then
 fi
 
 info "Config ready under $STATE_DIR"
-info "Next: build the SIF (see README), then ./scripts/start-services.sh"
+info "Next: ./scripts/fetch-apps.sh   # IDE + Obsidian + agy into state/apps"
+info "Then:  ./scripts/build-sif.sh && ./scripts/start-services.sh"
