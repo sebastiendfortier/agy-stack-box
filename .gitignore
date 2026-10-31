@@ -18,3 +18,5 @@ secrets.env
 *.swp
 .idea/
 .vscode/
+
+.host-quarantine*

@@ -103,6 +103,60 @@ display_binds() {
   printf '%s\n' "${binds[@]}"
 }
 
+# Vault at /vault (scripts) AND at the real host path (Obsidian file picker / obsidian.json).
+vault_binds() {
+  printf '%s\n' "$VAULT_HOST_PATH:$VAULT_IN_CONTAINER"
+  # Same directory again at the host path so GUI "Open folder" works inside the instance.
+  if [[ "$VAULT_HOST_PATH" != "$VAULT_IN_CONTAINER" ]]; then
+    printf '%s\n' "$VAULT_HOST_PATH:$VAULT_HOST_PATH"
+  fi
+}
+
+# Overlay updated wrappers from the checkout onto the running SIF (no rebuild needed).
+script_binds() {
+  local s src
+  for s in agy antigravity-ide openrouter-proxy obsidian-stack resolve-app; do
+    src="$ROOT/apptainer/rootfs-scripts/${s}.sh"
+    if [[ -f "$src" ]]; then
+      if [[ "$s" == resolve-app ]]; then
+        printf '%s\n' "$src:/usr/local/bin/agy-resolve-app"
+      else
+        printf '%s\n' "$src:/usr/local/bin/$s"
+      fi
+    fi
+  done
+}
+
+# Singularity rejects --env HOME=...; use --home instead.
+instance_home_args() {
+  printf '%s\n' --home "$STATE_DIR/home:$STATE_IN_CONTAINER/home"
+}
+
+# Env every instance start / exec needs (ports, proxy URL, state paths, secrets).
+instance_runtime_env() {
+  local -n _out=$1
+  _out+=(--env "CLOUD_CODE_URL=http://127.0.0.1:${PROXY_PORT}")
+  _out+=(--env "AGY_STATE=$STATE_IN_CONTAINER")
+  _out+=(--env "VAULT_PATH=$VAULT_IN_CONTAINER")
+  _out+=(--env "VAULT_HOST_PATH=${VAULT_HOST_PATH}")
+  _out+=(--env "PROXY_PORT=${PROXY_PORT}")
+  _out+=(--env "OBSIDIAN_REST_PORT=${OBSIDIAN_REST_PORT}")
+  _out+=(--env "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}")
+  _out+=(--env "OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}")
+  if [[ -n "${DISPLAY:-}" ]]; then
+    _out+=(--env "DISPLAY=$DISPLAY")
+  fi
+  if [[ -n "${XAUTHORITY:-}" ]]; then
+    _out+=(--env "XAUTHORITY=$XAUTHORITY")
+  fi
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    _out+=(--env "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
+  fi
+  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    _out+=(--env "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
+  fi
+}
+
 exec_in_instance() {
   local rt="$1"; shift
   local name="$1"; shift
@@ -113,22 +167,15 @@ exec_in_instance() {
   done < <(display_binds)
   # State + vault already bound at instance start; re-bind is harmless if paths match.
   args+=(--bind "$STATE_DIR:$STATE_IN_CONTAINER")
-  args+=(--bind "$VAULT_HOST_PATH:$VAULT_IN_CONTAINER")
-  if [[ -n "${DISPLAY:-}" ]]; then
-    args+=(--env "DISPLAY=$DISPLAY")
-  fi
-  if [[ -n "${XAUTHORITY:-}" ]]; then
-    args+=(--env "XAUTHORITY=$XAUTHORITY")
-  fi
-  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-    args+=(--env "WAYLAND_DISPLAY=$WAYLAND_DISPLAY")
-  fi
-  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
-    args+=(--env "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
-  fi
-  args+=(--env "HOME=$STATE_IN_CONTAINER/home")
-  args+=(--env "CLOUD_CODE_URL=http://127.0.0.1:${PROXY_PORT}")
-  args+=(--env "AGY_STATE=$STATE_IN_CONTAINER")
-  args+=(--env "VAULT_PATH=$VAULT_IN_CONTAINER")
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && args+=(--bind "$b")
+  done < <(vault_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && args+=(--bind "$b")
+  done < <(script_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && args+=("$b")
+  done < <(instance_home_args)
+  instance_runtime_env args
   "$rt" "${args[@]}" "instance://$name" "$@"
 }

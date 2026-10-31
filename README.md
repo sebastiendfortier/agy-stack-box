@@ -130,10 +130,12 @@ Optional strict mode (`AGY_NET_MODE=bridge`): CNI private netns. Needs a site th
 
 ## Obsidian vault
 
-1. Point `VAULT_HOST_PATH` at your vault directory.
+1. Point `VAULT_HOST_PATH` at your **vault directory** (the folder that contains `.obsidian/`, e.g. `~/KnowledgeBase/CodeVault` — not the parent `KnowledgeBase`).
 2. Install community plugin **Local REST API**.
 3. Set the plugin API key to the same value as `OBSIDIAN_API_KEY`.
 4. Prefer insecure HTTP on localhost (port = `OBSIDIAN_REST_PORT`, uid-derived by default; see `config/templates/obsidian-local-rest-api.data.json.example`).
+
+The stack bind-mounts the vault at `/vault` **and** at the same host path inside the instance, so Obsidian’s “Open folder” dialog works. Open `CodeVault` (or whatever `VAULT_HOST_PATH` is), not a parent folder that isn’t a vault.
 
 MCP is rendered to `state/gemini/antigravity/mcp_config.json` as `http://127.0.0.1:${OBSIDIAN_REST_PORT}/mcp/`.
 

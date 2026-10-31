@@ -39,23 +39,20 @@ if ! instance_running "$RT" "$INSTANCE_NAME"; then
     host) ;;
     *) die "AGY_NET_MODE must be host or bridge (got: $NET_MODE)" ;;
   esac
-  start_args+=(
-    --bind "$STATE_DIR:$STATE_IN_CONTAINER"
-    --bind "$VAULT_HOST_PATH:$VAULT_IN_CONTAINER"
-  )
+  start_args+=(--bind "$STATE_DIR:$STATE_IN_CONTAINER")
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && start_args+=(--bind "$b")
+  done < <(vault_binds)
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && start_args+=(--bind "$b")
+  done < <(script_binds)
   while IFS= read -r b; do
     [[ -n "$b" ]] && start_args+=(--bind "$b")
   done < <(display_binds)
-  if [[ -n "${DISPLAY:-}" ]]; then
-    start_args+=(--env "DISPLAY=$DISPLAY")
-  fi
-  if [[ -n "${XAUTHORITY:-}" ]]; then
-    start_args+=(--env "XAUTHORITY=$XAUTHORITY")
-  fi
-  start_args+=(--env "HOME=$STATE_IN_CONTAINER/home")
-  start_args+=(--env "CLOUD_CODE_URL=http://127.0.0.1:${PROXY_PORT}")
-  start_args+=(--env "AGY_STATE=$STATE_IN_CONTAINER")
-  start_args+=(--env "VAULT_PATH=$VAULT_IN_CONTAINER")
+  while IFS= read -r b; do
+    [[ -n "$b" ]] && start_args+=("$b")
+  done < <(instance_home_args)
+  instance_runtime_env start_args
 
   if [[ "$NET_MODE" == bridge ]]; then
     if ! "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME"; then
@@ -81,7 +78,7 @@ if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
   bash -lc "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null 2>&1"; then
   info "Starting OpenRouter BYOK proxy on 127.0.0.1:${PROXY_PORT}..."
   exec_in_instance "$RT" "$INSTANCE_NAME" \
-    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\" \"\$AGY_STATE/gemini/antigravity\"; nohup openrouter-proxy >>\"\$AGY_STATE/logs/proxy.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/proxy.pid\""
+    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\" \"\$AGY_STATE/gemini/antigravity\"; nohup env PROXY_PORT=\"\$PROXY_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" AGY_STATE=\"\$AGY_STATE\" HOME=\"\$AGY_STATE/home\" openrouter-proxy >>\"\$AGY_STATE/logs/proxy.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/proxy.pid\""
   for _ in $(seq 1 30); do
     if exec_in_instance "$RT" "$INSTANCE_NAME" \
       bash -lc "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null 2>&1"; then
@@ -99,10 +96,12 @@ info "Proxy healthy on instance loopback :${PROXY_PORT}"
 if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
   bash -lc "curl -fsS --max-time 2 http://127.0.0.1:${OBSIDIAN_REST_PORT}/ >/dev/null 2>&1 \
     || curl -fkSs --max-time 2 https://127.0.0.1:27124/ >/dev/null 2>&1"; then
-  info "Starting Obsidian AppImage (vault=$VAULT_IN_CONTAINER)..."
+  info "Starting Obsidian AppImage (vault=$VAULT_HOST_PATH)..."
   exec_in_instance "$RT" "$INSTANCE_NAME" \
-    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\"; nohup obsidian-stack \"\$VAULT_PATH\" >>\"\$AGY_STATE/logs/obsidian.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/obsidian.pid\""
-  info "Obsidian launched. First run: enable Local REST API in the vault if needed."
+    bash -lc "mkdir -p \"\$AGY_STATE/logs\" \"\$AGY_STATE/pids\"; # Kill a previous Obsidian in this instance if any
+      pkill -f 'Obsidian.AppImage|obsidian --no-sandbox' 2>/dev/null || true
+      nohup obsidian-stack \"\${VAULT_HOST_PATH:-\$VAULT_PATH}\" >>\"\$AGY_STATE/logs/obsidian.log\" 2>&1 & echo \$! >\"\$AGY_STATE/pids/obsidian.pid\""
+  info "Obsidian launched with preconfigured vault $VAULT_HOST_PATH"
   info "REST should listen on 127.0.0.1:${OBSIDIAN_REST_PORT} (insecure) inside the instance only."
 else
   info "Obsidian REST already responding on instance loopback."

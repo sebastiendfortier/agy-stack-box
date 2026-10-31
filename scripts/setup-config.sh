@@ -39,6 +39,29 @@ IDE_USER="$STATE_DIR/home/.config/Antigravity IDE/User"
 mkdir -p "$IDE_USER"
 render_template "$ROOT/config/templates/ide-settings.json.tmpl" "$IDE_USER/settings.json"
 
+# Obsidian open-vault registry: use the real host path (also bind-mounted into the instance)
+OBS_CFG_DIR="$STATE_DIR/home/.config/obsidian"
+mkdir -p "$OBS_CFG_DIR"
+python3 - "$OBS_CFG_DIR/obsidian.json" "$VAULT_HOST_PATH" <<'PY'
+import json, pathlib, sys, time, hashlib
+dest, vault = pathlib.Path(sys.argv[1]), sys.argv[2]
+vid = hashlib.md5(vault.encode()).hexdigest()[:16]
+data = {"vaults": {}, "language": "en"}
+if dest.exists():
+    try:
+        data = json.loads(dest.read_text())
+    except Exception:
+        pass
+data.setdefault("vaults", {})
+data["vaults"][vid] = {"path": vault, "ts": int(time.time() * 1000), "open": True}
+# Only one open vault
+for k, v in data["vaults"].items():
+    if k != vid and isinstance(v, dict):
+        v["open"] = False
+dest.write_text(json.dumps(data))
+print(dest)
+PY
+
 # Relative symlink so ~/.gemini resolves both on the host and inside the bind.
 mkdir -p "$STATE_DIR/home"
 rm -f "$STATE_DIR/home/.gemini"
