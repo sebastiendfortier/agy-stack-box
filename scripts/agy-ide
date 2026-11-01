@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Launch Antigravity IDE (ensures services; idle-stops them when no clients remain).
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+load_secrets
+ensure_services
+RT="$(resolve_runtime)"
+
+client_session_begin ide
+trap 'client_session_end' EXIT
+
+info "Starting Antigravity IDE (CLOUD_CODE_URL=http://127.0.0.1:${PROXY_PORT})..."
+exec_in_instance "$RT" "$INSTANCE_NAME" antigravity-ide "$@"

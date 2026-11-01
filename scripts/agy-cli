@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Launch agy CLI (ensures services; idle-stops them when no clients remain).
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+
+load_secrets
+ensure_services
+RT="$(resolve_runtime)"
+
+# Default to OpenRouter Auto unless the caller already chose a model.
+has_model=0
+for arg in "$@"; do
+  case "$arg" in
+    --model|--model=*) has_model=1 ;;
+  esac
+done
+if [[ $has_model -eq 0 ]]; then
+  set -- --model custom-openrouter-auto "$@"
+fi
+
+client_session_begin cli
+trap 'client_session_end' EXIT
+
+exec_in_instance "$RT" "$INSTANCE_NAME" agy "$@"

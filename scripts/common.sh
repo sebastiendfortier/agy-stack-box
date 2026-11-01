@@ -5,24 +5,76 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STATE_DIR="${AGY_STACK_STATE:-$ROOT/state}"
 SECRETS_FILE="$STATE_DIR/secrets.env"
-# Per-user defaults so shared login nodes do not collide on instance name / ports.
+# Per-user + per-host defaults: instance/pids are host-local (vis vs ppp must not share).
 _AGY_UID="$(id -u)"
-INSTANCE_NAME_DEFAULT="agy-stack-${USER:-$_AGY_UID}"
+HOST_ID="$(hostname -s 2>/dev/null | tr -c 'A-Za-z0-9._-' '_' || echo local)"
+HOST_ID="${HOST_ID:-local}"
+INSTANCE_NAME_DEFAULT="agy-stack-${USER:-$_AGY_UID}-${HOST_ID}"
 # Stay in 30000–59999; three ports per uid bucket (proxy, Obsidian HTTP, Obsidian HTTPS).
 # uid%10000 → 10k users before wrap; *3 keeps triples non-overlapping within the band.
+# Same uid on vis+ppp can both use these ports — each binds its own 127.0.0.1.
 _AGY_PORT_BASE=$((30000 + (_AGY_UID % 10000) * 3))
 PROXY_PORT_DEFAULT="$_AGY_PORT_BASE"
 OBSIDIAN_REST_PORT_DEFAULT="$((_AGY_PORT_BASE + 1))"
 OBSIDIAN_HTTPS_PORT_DEFAULT="$((_AGY_PORT_BASE + 2))"
+# Escalation router: one port per uid, in a band that cannot collide with the
+# 30000–59999 proxy/Obsidian buckets above.
+ROUTER_PORT_DEFAULT=$((20000 + (_AGY_UID % 10000)))
 SIF_DEFAULT="$ROOT/apptainer/agy-stack.sif"
 VAULT_IN_CONTAINER="/vault"
 STATE_IN_CONTAINER="/agy-state"
+# Shared FS-safe runtime dirs (sessions + service pids) under state/hosts/<host>/
+HOST_RUNTIME_DIR="$STATE_DIR/hosts/$HOST_ID"
+HOST_SESSIONS_DIR="$HOST_RUNTIME_DIR/sessions"
+# Path inside the instance ($AGY_STATE/...) for pid files
+HOST_PIDS_REL="hosts/$HOST_ID/pids"
+AGY_IDLE_STOP_SEC="${AGY_IDLE_STOP_SEC:-60}"
 # Real login home (for file pickers). Not state/home — that overlay made IDE see an empty $HOME.
 HOST_HOME="${AGY_HOST_HOME:-$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f6)}"
 HOST_HOME="${HOST_HOME:-${HOME:-}}"
+# Canonical home (login home may be a symlink into a shared FS); Electron may resolve either.
+HOST_HOME_REAL="$(readlink -f "$HOST_HOME" 2>/dev/null || echo "$HOST_HOME")"
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "$*"; }
+
+# Site SINGULARITY_BINDPATH often includes /home,/fs — a full /home bind can shadow nested
+# ~/.gemini overlays. Drop bare /home (and duplicates) for stack instance/exec; --home covers it.
+sanitize_site_bindpath() {
+  local var="$1" raw filtered="" part
+  raw="${!var:-}"
+  [[ -n "$raw" ]] || return 0
+  IFS=',' read -ra _parts <<< "$raw"
+  for part in "${_parts[@]}"; do
+    part="${part#"${part%%[![:space:]]*}"}"
+    part="${part%"${part##*[![:space:]]}"}"
+    case "$part" in
+      /home|/home:*) continue ;;
+    esac
+    [[ -n "$part" ]] || continue
+    filtered+="${filtered:+,}$part"
+  done
+  export "$var=$filtered"
+}
+
+sanitize_site_bindpath APPTAINER_BINDPATH
+sanitize_site_bindpath SINGULARITY_BINDPATH
+sanitize_site_bindpath APPTAINER_BIND
+sanitize_site_bindpath SINGULARITY_BIND
+
+# App/IDE read ~/.gemini/antigravity on the real home; keep OpenRouter models/MCP there too.
+sync_gemini_to_home() {
+  local src="$STATE_DIR/gemini/antigravity" dest
+  [[ -d "$src" ]] || return 0
+  for dest in \
+    "$HOST_HOME/.gemini/antigravity" \
+    "$HOST_HOME_REAL/.gemini/antigravity"; do
+    [[ -n "$dest" ]] || continue
+    mkdir -p "$dest"
+    [[ -f "$src/custom_models.json" ]] && cp -a "$src/custom_models.json" "$dest/"
+    [[ -f "$src/mcp_config.json" ]] && cp -a "$src/mcp_config.json" "$dest/"
+  done
+}
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
@@ -81,6 +133,16 @@ load_secrets() {
   else
     OBSIDIAN_HTTPS_PORT="$OBSIDIAN_HTTPS_PORT_DEFAULT"
   fi
+  # Capability-escalation router. Deliberately outside the 30000–59999 bucket
+  # range so it never collides with another uid's proxy/Obsidian triple.
+  if secrets_has ROUTER_PORT; then
+    : "${ROUTER_PORT:?ROUTER_PORT empty in secrets.env}"
+  else
+    ROUTER_PORT="$ROUTER_PORT_DEFAULT"
+  fi
+  if secrets_has ROUTER_TOKEN; then
+    : "${ROUTER_TOKEN:?ROUTER_TOKEN empty in secrets.env}"
+  fi
   SIF_PATH="${SIF_PATH:-$SIF_DEFAULT}"
   # Optional colon/comma-separated extra binds (HPC scratch, projects, …), e.g. /scratch/$USER:/scratch/$USER
   AGY_EXTRA_BINDS="${AGY_EXTRA_BINDS:-}"
@@ -102,6 +164,9 @@ replacements = {
     "{{VAULT_HOST_PATH}}": os.environ["VAULT_HOST_PATH"],
     "{{VAULT_IN_CONTAINER}}": os.environ.get("VAULT_IN_CONTAINER", "/vault"),
     "{{PROXY_PORT}}": os.environ["PROXY_PORT"],
+    "{{ROUTER_PORT}}": os.environ.get("ROUTER_PORT", str(20000 + int(os.getuid()) % 10000)),
+    "{{ROUTER_TOKEN}}": os.environ.get("ROUTER_TOKEN", ""),
+    "{{IHUB_BASE_URL}}": os.environ.get("IHUB_BASE_URL", ""),
     "{{OBSIDIAN_REST_PORT}}": os.environ["OBSIDIAN_REST_PORT"],
     # Optional local Qwen endpoint (HPC); rendering still works when unset.
     "{{QWEN_BASE_URL}}": os.environ.get("QWEN_BASE_URL", "http://127.0.0.1:8000"),
@@ -172,7 +237,8 @@ host_path_binds() {
   local p d root
   local -a cand=()
   # Explicit software roots often used on HPC.
-  for d in /cvmfs /opt/software /opt/ohpc /opt/apps /soft /software /appl /apps \
+  # Do NOT include /apps — that prefix is owned by the SIF (node + IDE/App/agy/Obsidian).
+  for d in /cvmfs /opt/software /opt/ohpc /opt/apps /soft /software /appl \
            /sw /gpfs /lustre /project /projects /scratch /work /data; do
     [[ -d "$d" ]] && cand+=("$d")
   done
@@ -188,7 +254,7 @@ host_path_binds() {
       # Never promote to /opt, /usr, /tmp, … — that would hide the SIF's /opt/agy-stack.
       root="$(dirname "$p")"
       case "$root" in
-        /|/usr|/bin|/sbin|/lib|/lib64|/opt|/tmp|/var|/home|/Users|/private) ;;
+        /|/usr|/bin|/sbin|/lib|/lib64|/opt|/apps|/tmp|/var|/home|/Users|/private) ;;
         *) [[ -d "$root" ]] && cand+=("$root") ;;
       esac
     elif [[ -e "$p" ]]; then
@@ -201,8 +267,9 @@ host_path_binds() {
       NF && $0 ~ /^\// && !seen[$0]++ {
         if (home != "" && ($0 == home || index($0, home "/") == 1)) next
         if (state != "" && ($0 == state || index($0, state "/") == 1)) next
-        if ($0 == "/bin" || $0 == "/sbin" || $0 == "/usr" || $0 == "/opt" || $0 == "/tmp" || $0 == "/var") next
+        if ($0 == "/bin" || $0 == "/sbin" || $0 == "/usr" || $0 == "/opt" || $0 == "/apps" || $0 == "/tmp" || $0 == "/var") next
         if ($0 ~ /^\/usr\//) next
+        if ($0 ~ /^\/apps\//) next
         print $0 ":" $0
       }'
   fi
@@ -224,6 +291,12 @@ script_binds() {
   prepare_stack_bin
   # host-scripts exists in the SIF; directory bind replaces it with our named launchers.
   printf '%s\n' "$STATE_DIR/stack-bin:/opt/agy-stack/host-scripts"
+  # Node under /apps survives host /usr overlay; optional state tree until next SIF bake.
+  if [[ -x "$STATE_DIR/apps/node/bin/node" ]]; then
+    printf '%s\n' "$STATE_DIR/apps/node:/apps/node"
+  elif [[ -x "$STATE_DIR/opt-node/bin/node" ]]; then
+    printf '%s\n' "$STATE_DIR/opt-node:/apps/node"
+  fi
 }
 
 # Stack-managed config layered onto the real home (HOME stays the real home for pickers).
@@ -235,12 +308,22 @@ config_binds() {
     "$STATE_DIR/home/.config/Antigravity" \
     "$STATE_DIR/home/.config/obsidian" \
     "$HOST_HOME/.config" \
-    "$HOST_HOME/.gemini"
+    "$HOST_HOME/.gemini" \
+    "$HOST_HOME_REAL/.config" \
+    "$HOST_HOME_REAL/.gemini"
+  # Bind gemini/config on both symlink and realpath homes (Electron may use either).
   printf '%s\n' "$STATE_DIR/gemini:$HOST_HOME/.gemini"
+  if [[ "$HOST_HOME_REAL" != "$HOST_HOME" ]]; then
+    printf '%s\n' "$STATE_DIR/gemini:$HOST_HOME_REAL/.gemini"
+  fi
   printf '%s\n' "$STATE_DIR/home/.config/Antigravity IDE:$HOST_HOME/.config/Antigravity IDE"
-  # Antigravity App 2.0 (Electron) userData
   printf '%s\n' "$STATE_DIR/home/.config/Antigravity:$HOST_HOME/.config/Antigravity"
   printf '%s\n' "$STATE_DIR/home/.config/obsidian:$HOST_HOME/.config/obsidian"
+  if [[ "$HOST_HOME_REAL" != "$HOST_HOME" ]]; then
+    printf '%s\n' "$STATE_DIR/home/.config/Antigravity IDE:$HOST_HOME_REAL/.config/Antigravity IDE"
+    printf '%s\n' "$STATE_DIR/home/.config/Antigravity:$HOST_HOME_REAL/.config/Antigravity"
+    printf '%s\n' "$STATE_DIR/home/.config/obsidian:$HOST_HOME_REAL/.config/obsidian"
+  fi
 }
 
 extra_binds() {
@@ -281,11 +364,18 @@ instance_runtime_env() {
   envargs+=(--env "VAULT_PATH=$VAULT_IN_CONTAINER")
   envargs+=(--env "VAULT_HOST_PATH=${VAULT_HOST_PATH}")
   envargs+=(--env "PROXY_PORT=${PROXY_PORT}")
+  envargs+=(--env "ROUTER_PORT=${ROUTER_PORT}")
   envargs+=(--env "OBSIDIAN_REST_PORT=${OBSIDIAN_REST_PORT}")
   envargs+=(--env "OPENROUTER_API_KEY=${OPENROUTER_API_KEY}")
+  # Optional: lets the router's cheap tier authenticate. Empty keeps it unset.
+  if [[ -n "${IHUB_API_KEY:-}" ]]; then
+    envargs+=(--env "IHUB_API_KEY=${IHUB_API_KEY}")
+  fi
   envargs+=(--env "OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}")
-  # Stack launchers first, then login PATH (modules, conda, ~/.local/bin, …).
-  envargs+=(--env "PATH=/opt/agy-stack/host-scripts:${PATH:-/usr/bin:/bin}")
+  # Stack launchers + /apps/node first, then login PATH (modules, conda, …).
+  # /apps is SIF-owned (not host-bound); host /usr Node 12 must not win.
+  envargs+=(--env "PATH=/opt/agy-stack/host-scripts:/apps/node/bin:${PATH:-/usr/bin:/bin}")
+  envargs+=(--env "NODE_BIN=/apps/node/bin/node")
   for v in \
     LD_LIBRARY_PATH LIBRARY_PATH MODULEPATH LOADEDMODULES \
     MODULESHOME BASH_ENV ENV \
@@ -314,6 +404,20 @@ instance_runtime_env() {
   if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
     envargs+=(--env "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
   fi
+  # Science proxy for Google OAuth webview / HTTPS (HPC often has no direct egress).
+  # Prefer already-exported values; otherwise use the site webproxy.
+  local _http_proxy="${http_proxy:-${HTTP_PROXY:-http://webproxy.science.gc.ca:8888/}}"
+  local _https_proxy="${https_proxy:-${HTTPS_PROXY:-$_http_proxy}}"
+  # Comma-separated values CANNOT use singularity/apptainer --env (comma splits KEY=VAL list).
+  # Pass them via APPTAINERENV_* / SINGULARITYENV_* instead.
+  local _no_proxy="${no_proxy:-${NO_PROXY:-localhost,127.0.0.1,::1}}"
+  envargs+=(--env "http_proxy=$_http_proxy")
+  envargs+=(--env "https_proxy=$_https_proxy")
+  envargs+=(--env "HTTP_PROXY=$_http_proxy")
+  envargs+=(--env "HTTPS_PROXY=$_https_proxy")
+  envargs+=(--env "BROWSER=${BROWSER:-firefox}")
+  export APPTAINERENV_no_proxy="$_no_proxy" SINGULARITYENV_no_proxy="$_no_proxy"
+  export APPTAINERENV_NO_PROXY="$_no_proxy" SINGULARITYENV_NO_PROXY="$_no_proxy"
 }
 
 exec_in_instance() {
@@ -329,4 +433,256 @@ exec_in_instance() {
   done < <(instance_home_args)
   instance_runtime_env args
   "$rt" "${args[@]}" "instance://$name" "$@"
+}
+
+# Register a client session (ide|app|cli). Cleared when the launcher exits.
+client_session_begin() {
+  local kind="${1:?kind}"
+  mkdir -p "$HOST_SESSIONS_DIR" "$HOST_RUNTIME_DIR/pids"
+  CLIENT_SESSION_FILE="$HOST_SESSIONS_DIR/${kind}.$$"
+  printf '%s %s %s\n' "$(date -Iseconds 2>/dev/null || date)" "$kind" "$$" >"$CLIENT_SESSION_FILE"
+  export CLIENT_SESSION_FILE
+}
+
+client_session_end() {
+  [[ -n "${CLIENT_SESSION_FILE:-}" ]] && rm -f "$CLIENT_SESSION_FILE"
+  CLIENT_SESSION_FILE=""
+  schedule_idle_stop
+}
+
+# True if any ide/app/cli session files remain, or matching processes inside the instance.
+clients_still_active() {
+  local RT f
+  mkdir -p "$HOST_SESSIONS_DIR"
+  shopt -s nullglob
+  for f in "$HOST_SESSIONS_DIR"/*; do
+    [[ -f "$f" ]] && return 0
+  done
+  shopt -u nullglob
+  RT="$(resolve_runtime)"
+  instance_running "$RT" "$INSTANCE_NAME" || return 1
+  exec_in_instance "$RT" "$INSTANCE_NAME" bash --noprofile --norc -c '
+    pgrep -f "antigravity-ide|/Antigravity IDE/antigravity-ide" >/dev/null 2>&1 && exit 0
+    pgrep -f "Antigravity-x64/antigravity" >/dev/null 2>&1 && exit 0
+    # agy CLI binary (not openrouter-proxy / wrappers named agy-*)
+    pgrep -f "/apps/agy/bin/agy|/opt/agy/bin/agy|/.local/bin/agy" >/dev/null 2>&1 && exit 0
+    exit 1
+  ' 2>/dev/null
+}
+
+# After last client exits: wait AGY_IDLE_STOP_SEC, then stop services if still idle.
+schedule_idle_stop() {
+  local wait_sec="${AGY_IDLE_STOP_SEC:-60}"
+  mkdir -p "$HOST_RUNTIME_DIR"
+  (
+    # Only one reaper per host; others exit quietly.
+    exec 9>"$HOST_RUNTIME_DIR/idle-stop.lock"
+    flock -n 9 || exit 0
+    sleep "$wait_sec"
+    # Re-load secrets lightly for INSTANCE_NAME if needed
+    if [[ -f "$SECRETS_FILE" ]]; then
+      # shellcheck disable=SC1090
+      set -a; source "$SECRETS_FILE"; set +a
+    fi
+    INSTANCE_NAME="${INSTANCE_NAME:-$INSTANCE_NAME_DEFAULT}"
+    if clients_still_active; then
+      exit 0
+    fi
+    info "No agy-ide/app/cli on $HOST_ID for ${wait_sec}s — stopping services."
+    stop_services || true
+  ) >/dev/null 2>&1 &
+  disown || true
+}
+
+# Stop proxy/router/Obsidian inside the local instance, then the instance.
+stop_services() {
+  local RT
+  RT="$(resolve_runtime)"
+  if [[ -f "$SECRETS_FILE" ]]; then
+    load_secrets 2>/dev/null || INSTANCE_NAME="${INSTANCE_NAME:-$INSTANCE_NAME_DEFAULT}"
+  else
+    INSTANCE_NAME="${INSTANCE_NAME:-$INSTANCE_NAME_DEFAULT}"
+  fi
+  if instance_running "$RT" "$INSTANCE_NAME"; then
+    info "Stopping services inside '$INSTANCE_NAME'..."
+    exec_in_instance "$RT" "$INSTANCE_NAME" bash --noprofile --norc -c "
+      pids=\"\$AGY_STATE/${HOST_PIDS_REL}\"
+      mkdir -p \"\$pids\"
+      for name in obsidian proxy router; do
+        f=\"\$pids/\${name}.pid\"
+        if [[ -f \"\$f\" ]]; then
+          pid=\$(cat \"\$f\" || true)
+          if [[ -n \"\$pid\" ]] && kill -0 \"\$pid\" 2>/dev/null; then
+            kill \"\$pid\" 2>/dev/null || true
+            sleep 0.5
+            kill -9 \"\$pid\" 2>/dev/null || true
+          fi
+          rm -f \"\$f\"
+        fi
+      done
+      # Legacy unscoped pids (pre-host layout)
+      for name in obsidian proxy router; do
+        f=\"\$AGY_STATE/pids/\${name}.pid\"
+        if [[ -f \"\$f\" ]]; then
+          pid=\$(cat \"\$f\" || true)
+          if [[ -n \"\$pid\" ]] && kill -0 \"\$pid\" 2>/dev/null; then
+            kill \"\$pid\" 2>/dev/null || true
+            kill -9 \"\$pid\" 2>/dev/null || true
+          fi
+          rm -f \"\$f\"
+        fi
+      done
+      pkill -f \"/opt/obsidian/Obsidian|/apps/obsidian/Obsidian\" 2>/dev/null || true
+      pkill -f \"desktop-service.mjs\" 2>/dev/null || true
+      pkill -f \"model-router.mjs\" 2>/dev/null || true
+      true
+    " || true
+    info "Stopping instance..."
+    "$RT" instance stop "$INSTANCE_NAME" || true
+  else
+    info "Instance '$INSTANCE_NAME' is not running."
+  fi
+  # Host-side fallback: service processes orphaned outside the instance (e.g. after
+  # a node restart wipes the instance registry) are invisible inside the container
+  # but visible on the host. UID-scoped so we never touch other users' stacks.
+  pkill -u "$(id -u)" -f "model-router.mjs" 2>/dev/null || true
+  pkill -u "$(id -u)" -f "openrouter-proxy" 2>/dev/null || true
+  rm -f "$HOST_RUNTIME_DIR/instance.name" "$STATE_DIR/instance.name"
+  info "Stopped."
+}
+
+# Start instance + OpenRouter proxy + Obsidian if not already up (idempotent).
+# Caller must load_secrets first.
+ensure_services() {
+  require_sif
+  local RT NET_MODE DNS_FILE
+  local -a start_args
+  local b req _
+  # Expanded into container shell snippets (host-scoped pid dir under $AGY_STATE).
+  local _cpids="\$AGY_STATE/${HOST_PIDS_REL}"
+  RT="$(resolve_runtime)"
+  sync_gemini_to_home
+  mkdir -p "$HOST_RUNTIME_DIR/pids" "$HOST_SESSIONS_DIR" "$STATE_DIR/logs"
+
+  # Apps + Node are under /apps in the SIF (optional state/apps override). /apps is never host-bound.
+
+  # AGY_NET_MODE=host (default): share host netns; proxy/Obsidian still bind 127.0.0.1
+  #   (LAN-safe, no sudo, OpenRouter egress works).
+  # AGY_NET_MODE=bridge: Singularity CNI private net (strict). On Ubuntu Singularity CE
+  #   this often needs: sudo singularity instance start ... and may still lack egress.
+  NET_MODE="${AGY_NET_MODE:-host}"
+
+  if ! instance_running "$RT" "$INSTANCE_NAME"; then
+    info "Starting instance '$INSTANCE_NAME' (AGY_NET_MODE=$NET_MODE)..."
+    start_args=(instance start)
+    case "$NET_MODE" in
+      bridge)
+        start_args+=(--net --network bridge)
+        # systemd-resolved stub is unreachable inside a netns
+        DNS_FILE="$STATE_DIR/resolv.conf"
+        if [[ ! -f "$DNS_FILE" ]]; then
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' >"$DNS_FILE"
+        fi
+        start_args+=(--bind "$DNS_FILE:/etc/resolv.conf")
+        ;;
+      host) ;;
+      *) die "AGY_NET_MODE must be host or bridge (got: $NET_MODE)" ;;
+    esac
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && start_args+=(--bind "$b")
+    done < <(all_instance_binds)
+    while IFS= read -r b; do
+      [[ -n "$b" ]] && start_args+=("$b")
+    done < <(instance_home_args)
+    instance_runtime_env start_args
+    info "Host tools: AGY_HOST_OS_TOOLS=${AGY_HOST_OS_TOOLS:-1} AGY_HOST_PATH_BINDS=${AGY_HOST_PATH_BINDS:-1} (PATH/modules passed through)"
+
+    if [[ "$NET_MODE" == bridge ]]; then
+      if ! "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME"; then
+        if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+          info "unprivileged bridge start failed; retrying with passwordless sudo..."
+          sudo "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \
+            || die "bridge start failed. On HPC (no sudo) use default AGY_NET_MODE=host."
+        else
+          die "bridge CNI start failed and sudo is unavailable (typical on HPC). Use AGY_NET_MODE=host (default)."
+        fi
+      fi
+    else
+      "$RT" "${start_args[@]}" "$SIF_PATH" "$INSTANCE_NAME" \
+        || die "instance start failed"
+    fi
+    echo "$INSTANCE_NAME" >"$HOST_RUNTIME_DIR/instance.name"
+  else
+    info "Instance '$INSTANCE_NAME' already running."
+  fi
+
+  # Non-login shells: login -lc pulls ordenv/profile and hides real errors in spam.
+  local _sh=(bash --noprofile --norc -c)
+
+  # Start OpenRouter BYOK proxy if not healthy
+  if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
+    "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null 2>&1"; then
+    info "Starting OpenRouter BYOK proxy on 127.0.0.1:${PROXY_PORT}..."
+    : >"$STATE_DIR/logs/proxy.log"
+    exec_in_instance "$RT" "$INSTANCE_NAME" \
+      "${_sh[@]}" "mkdir -p \"${_cpids}\" \"\$AGY_STATE/logs\" \"\$AGY_STATE/gemini/antigravity\"; nohup env PROXY_PORT=\"\$PROXY_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" AGY_STATE=\"\$AGY_STATE\" NODE_BIN=\"\${NODE_BIN:-/apps/node/bin/node}\" openrouter-proxy >>\"\$AGY_STATE/logs/proxy.log\" 2>&1 & echo \$! >\"${_cpids}/proxy.pid\""
+    for _ in $(seq 1 30); do
+      if exec_in_instance "$RT" "$INSTANCE_NAME" \
+        "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null 2>&1"; then
+        break
+      fi
+      sleep 0.5
+    done
+    exec_in_instance "$RT" "$INSTANCE_NAME" \
+      "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${PROXY_PORT}/healthz >/dev/null" \
+      || die "proxy did not become healthy — see $STATE_DIR/logs/proxy.log"
+  fi
+  info "Proxy healthy on instance loopback :${PROXY_PORT}"
+
+  # Capability-escalation router (optional; setup-config may install it under state/router).
+  if [[ -f "$STATE_DIR/router/model-router.mjs" ]]; then
+    if ! exec_in_instance "$RT" "$INSTANCE_NAME" \
+      "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${ROUTER_PORT}/healthz >/dev/null 2>&1"; then
+      info "Starting model router on 127.0.0.1:${ROUTER_PORT}..."
+      : >"$STATE_DIR/logs/router.log"
+      exec_in_instance "$RT" "$INSTANCE_NAME" \
+        "${_sh[@]}" "mkdir -p \"${_cpids}\" \"\$AGY_STATE/logs\"; nohup env AGY_STATE=\"\$AGY_STATE\" ROUTER_PORT=\"\$ROUTER_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" NODE_BIN=\"\${NODE_BIN:-/apps/node/bin/node}\" \"\${NODE_BIN:-/apps/node/bin/node}\" \"\$AGY_STATE/router/model-router.mjs\" --config \"\$AGY_STATE/router/config.json\" >>\"\$AGY_STATE/logs/router.log\" 2>&1 & echo \$! >\"${_cpids}/router.pid\""
+      for _ in $(seq 1 30); do
+        if exec_in_instance "$RT" "$INSTANCE_NAME" \
+          "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${ROUTER_PORT}/healthz >/dev/null 2>&1"; then
+          break
+        fi
+        sleep 0.5
+      done
+      exec_in_instance "$RT" "$INSTANCE_NAME" \
+        "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${ROUTER_PORT}/healthz >/dev/null" \
+        || die "model router did not become healthy — see $STATE_DIR/logs/router.log"
+    fi
+    info "Model router healthy on instance loopback :${ROUTER_PORT}"
+  fi
+
+  # Start Obsidian AppImage (GUI + Local REST API plugin in the vault).
+  # Headless nodes (ppp/login, SSH without -X) have no X11/Wayland: Electron cannot
+  # open a display, so skip the GUI instead of failing silently on every start.
+  # Vault stays bind-mounted (files/MCP unaffected). Override: AGY_FORCE_OBSIDIAN=1.
+  if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" && "${AGY_FORCE_OBSIDIAN:-0}" != "1" ]]; then
+    info "Headless ($HOST_ID): no display — skipping Obsidian GUI (vault still mounted at /vault)."
+  elif ! exec_in_instance "$RT" "$INSTANCE_NAME" \
+    "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${OBSIDIAN_REST_PORT}/ >/dev/null 2>&1 \
+      || curl -fkSs --max-time 2 https://127.0.0.1:${OBSIDIAN_HTTPS_PORT}/ >/dev/null 2>&1"; then
+    info "Starting Obsidian AppImage (vault=$VAULT_HOST_PATH)..."
+    exec_in_instance "$RT" "$INSTANCE_NAME" \
+      "${_sh[@]}" "mkdir -p \"${_cpids}\" \"\$AGY_STATE/logs\"
+        if [[ -f \"${_cpids}/obsidian.pid\" ]]; then
+          kill \"\$(cat \"${_cpids}/obsidian.pid\")\" 2>/dev/null || true
+          sleep 0.5
+        fi
+        nohup obsidian-stack \"\${VAULT_HOST_PATH:-\$VAULT_PATH}\" >>\"\$AGY_STATE/logs/obsidian.log\" 2>&1 & echo \$! >\"${_cpids}/obsidian.pid\""
+    info "Obsidian launched with preconfigured vault $VAULT_HOST_PATH"
+    info "REST should listen on 127.0.0.1:${OBSIDIAN_REST_PORT} (insecure) inside the instance only."
+  else
+    info "Obsidian REST already responding on instance loopback."
+  fi
+
+  info "Services up on $HOST_ID."
 }
