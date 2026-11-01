@@ -45,6 +45,10 @@ Optional: `SSM_DEPLOY_SSH_TARGET=user@host` to deploy via SSH,
 1. Prepends the package `bin/` to `PATH`.
 2. Creates `~/.agy-stack/state` (mode 700) on first load; **never overwrites**
    existing state or `secrets.env` (created 0600 only if missing).
+   Note: judge seeding by sourcing the loader normally (`bash -c 'source ...'`).
+   Piping a sourced script into `head`/`less` runs it in a pipeline subshell —
+   `head` closes the pipe, SIGPIPE can kill the seeding mid-run. Test artifact,
+   not a loader bug.
 3. Copies the always-on `AGENTS.md` into `~/.agy-stack/`.
 4. Ports are uid-derived (collision-free per host): proxy/Obsidian triple at
    `30000 + (uid % 10000) * 3`, router at `20000 + (uid % 10000)`.
