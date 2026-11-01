@@ -1,7 +1,7 @@
 # ADR: SSM Phase 1 acceptance — agy-stack-box package
 
 - **Status**: Accepted (Architect verdict 2026-11-01, conditional gates all closed)
-- **Branch**: `feat/ssm-phase1` — `b005c47` (Phase 1) → `42b4f45` (loader fix) → `7b4fb87` (SIGPIPE doc) → `e279dd7` (dry-run append)
+- **Branch**: `feat/ssm-phase1` — `b005c47` (Phase 1) → `42b4f45` (loader fix) → `7b4fb87` (SIGPIPE doc) → `e279dd7` (dry-run append) → `053ece4` (this ADR) → `70474c8` (PRUNE_SNIPPET quote fix)
 - **Scope**: SSM packaging only (make / setup / deploy / validate / bin wrappers). Router rewrite, SIF app-baking, hooks = later phases (PLAN-SSM §roadmap).
 
 ## Decision 1 — Package layout (sibling parity)
@@ -58,9 +58,9 @@ injective within each family. Documented in the loader and README.
   cannot execute SIFs here ("No setuid installation found"). Static validation
   (14/14) stands; runtime smoke test belongs on the real host (Phase 2 item).
 - **UPSTREAM.txt placeholders** (`<UPSTREAM-*-URL>`) resolve in Phase 5.
-- **Pre-existing main-branch redaction matches** (build-sif.sh `/fs/` checks,
-  common.sh webproxy URL, mcp_config.tmpl URLs) — out of Phase 1 scope;
-  hygiene task for maintainer decision before the repo goes public.
+- **Pre-existing main-branch redaction matches** (build-sif.sh absolute-path
+  checks, common.sh webproxy URL, mcp_config.tmpl internal URLs) — out of
+  Phase 1 scope; hygiene task for maintainer decision before the repo goes public.
 
 ## Validation record
 
