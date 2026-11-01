@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# agy-stop — SSM launcher: stop services + instance on this host.
+set -euo pipefail
+_PKG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export AGY_STACK_STATE="${AGY_STACK_STATE:-${HOME}/.agy-stack/state}"
+export SIF_PATH="${SIF_PATH:-${_PKG_ROOT}/share/container/agy-stack-box.sif}"
+# shellcheck source=../share/lib/common.sh
+source "${_PKG_ROOT}/share/lib/common.sh"
+
+stop_services

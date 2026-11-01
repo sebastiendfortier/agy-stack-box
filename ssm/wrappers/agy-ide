@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# agy-ide — SSM launcher (delegates to the package copy of common.sh).
+set -euo pipefail
+_PKG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export AGY_STACK_STATE="${AGY_STACK_STATE:-${HOME}/.agy-stack/state}"
+export SIF_PATH="${SIF_PATH:-${_PKG_ROOT}/share/container/agy-stack-box.sif}"
+# shellcheck source=../share/lib/common.sh
+source "${_PKG_ROOT}/share/lib/common.sh"
+
+load_secrets
+ensure_services
+RT="$(resolve_runtime)"
+
+client_session_begin ide
+trap 'client_session_end' EXIT
+
+info "Starting Antigravity IDE (CLOUD_CODE_URL=http://127.0.0.1:${PROXY_PORT})..."
+exec_in_instance "$RT" "$INSTANCE_NAME" antigravity-ide "$@"

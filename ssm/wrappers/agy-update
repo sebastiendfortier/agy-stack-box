@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# agy-update — report current stack versions + pinned upstream sources (read-only).
+# Full version-table checking against upstreams lands in Phase 5 (PLAN-SSM §6).
+set -euo pipefail
+_PKG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+UPSTREAM="${_PKG_ROOT}/share/manifest/UPSTREAM.txt"
+
+echo "agy-stack-box — installed package: ${_PKG_ROOT}"
+if [[ -f "${_PKG_ROOT}/.ssm.d/control.json" ]]; then
+  python3 -c "import json,sys; c=json.load(open('${_PKG_ROOT}/.ssm.d/control.json')); print('version:', c['version'], '| built:', c.get('x-build-date','?'))"
+fi
+if [[ -f "${_PKG_ROOT}/share/container/agy-stack-box.sif" ]]; then
+  stat -c 'sif: %y %s bytes' "${_PKG_ROOT}/share/container/agy-stack-box.sif"
+else
+  echo "sif: (not packaged in this install)"
+fi
+echo
+echo "Pinned upstream sources (maintainer checks these before republishing):"
+cat "$UPSTREAM" 2>/dev/null || echo "(no UPSTREAM.txt in this package)"
+echo
+echo "Update policy: nothing auto-updates. A maintainer rebuilds the SIF, runs the"
+echo "feature gates, publishes a new SSM version, and flips 'latest'."
