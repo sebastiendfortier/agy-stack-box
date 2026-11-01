@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download large apps into state/apps (kept out of the SIF to stay slim).
+# Optional: download apps into state/apps to override the copies baked under /opt in the SIF.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=common.sh

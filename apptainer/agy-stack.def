@@ -4,16 +4,17 @@ From: rockylinux:9
 %labels
     Author sebastiendfortier
     App agy-stack-box
-    Description Slim runtime: OpenRouter BYOK proxy + Electron libs. IDE/Obsidian/agy in state/apps via fetch-apps.sh.
+    Description Runtime + OpenRouter BYOK proxy; Node/IDE/App/Obsidian/agy under /apps (PATH). Host tools via binds.
 
 %help
-    Slim image. Large apps are NOT baked in — run ./scripts/fetch-apps.sh after setup-config.
-    Then: start-services / start-ide / start-cli
+    Apps live under /apps (not host-bound). Launchers under /opt/agy-stack/host-scripts.
+    Optional override: state/apps via AGY_STATE. Host: scripts/agy-ide | agy-cli | agy-app
 
 %files
     rootfs-scripts/openrouter-proxy.sh /opt/agy-stack/host-scripts/openrouter-proxy.sh
     rootfs-scripts/agy.sh /opt/agy-stack/host-scripts/agy.sh
     rootfs-scripts/antigravity-ide.sh /opt/agy-stack/host-scripts/antigravity-ide.sh
+    rootfs-scripts/antigravity-app.sh /opt/agy-stack/host-scripts/antigravity-app.sh
     rootfs-scripts/obsidian-stack.sh /opt/agy-stack/host-scripts/obsidian-stack.sh
     rootfs-scripts/resolve-app.sh /opt/agy-stack/host-scripts/resolve-app.sh
 
@@ -22,10 +23,11 @@ From: rockylinux:9
     ADD_MODEL_GIT='https://github.com/vahapogut/antigravity-add-model.git'
     ADD_MODEL_REF='f793635'
     NODE_VER='v22.14.0'
+    ANTIGRAVITY_IDE_URL='https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/2.6.0-5526304964083712/linux-x64/Antigravity%20IDE.tar.gz'
+    ANTIGRAVITY_APP_URL='https://storage.googleapis.com/antigravity-public/antigravity-hub/2.28.2-5937220255875072/linux-x64/Antigravity.tar.gz'
+    OBSIDIAN_APPIMAGE_URL='https://github.com/obsidianmd/obsidian-releases/releases/download/v1.14.5/Obsidian-1.14.5.AppImage'
 
     # Do NOT run `dnf update` under fakeroot (filesystem RPM /dev chown fails).
-    # Keep git/ssh/diff in the *final* image — agents and IDE terminals need them.
-    # (Earlier builds removed git-core after npm build to save space; that broke workflows.)
     dnf -y install --allowerasing --setopt=install_weak_deps=False \
       ca-certificates curl tar gzip which findutils git-core openssh-clients \
       diffutils patch less procps-ng iproute \
@@ -33,17 +35,17 @@ From: rockylinux:9
       libxshmfence libdrm mesa-libGL mesa-libgbm nss nspr atk at-spi2-atk \
       gtk3 pango cairo alsa-lib cups-libs libsecret
 
-    # Official Node binary (smaller than Nodesource RPM + repo metadata)
+    # /apps is SIF-owned: host AGY_HOST_OS_TOOLS overlays /usr but never /apps.
     curl -fsSL "https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-x64.tar.gz" -o /tmp/node.tgz
-    mkdir -p /usr/local
-    tar -xzf /tmp/node.tgz -C /usr/local --strip-components=1
+    mkdir -p /apps/node
+    tar -xzf /tmp/node.tgz -C /apps/node --strip-components=1
     rm -f /tmp/node.tgz
-    rm -rf /usr/local/lib/node_modules/npm/docs \
-           /usr/local/lib/node_modules/npm/man \
-           /usr/local/lib/node_modules/npm/html \
-           /usr/local/include \
-           /usr/local/share || true
-    export PATH=/usr/local/bin:$PATH
+    rm -rf /apps/node/lib/node_modules/npm/docs \
+           /apps/node/lib/node_modules/npm/man \
+           /apps/node/lib/node_modules/npm/html \
+           /apps/node/include \
+           /apps/node/share || true
+    export PATH=/apps/node/bin:/usr/local/bin:$PATH
     node -v && npm -v
 
     echo "Building antigravity-add-model (production prune)..."
@@ -56,30 +58,63 @@ From: rockylinux:9
     rm -rf .git src docs assets .github \
            tsconfig.json .eslintrc* .prettierrc* .gitignore .gitattributes \
            README* CHANGELOG* LICENSE* package-lock.json 2>/dev/null || true
-    # Drop test/docs noise from deps
     find node_modules -type d \( -iname test -o -iname tests -o -iname __tests__ -o -iname docs -o -iname example -o -iname examples -o -iname '.github' \) -print0 2>/dev/null \
       | xargs -0 -r rm -rf
     find node_modules -type f \( -name '*.md' -o -name '*.ts' -o -name '*.map' -o -name 'LICENSE*' -o -name 'CHANGELOG*' -o -name '*.markdown' \) -delete 2>/dev/null || true
+
+    echo "Fetching Antigravity IDE into /apps..."
+    mkdir -p /apps/antigravity-ide /tmp/agy-fetch
+    curl -fL "$ANTIGRAVITY_IDE_URL" -o /tmp/agy-fetch/ide.tar.gz
+    tar -xzf /tmp/agy-fetch/ide.tar.gz -C /apps/antigravity-ide
+    chmod 4755 "/apps/antigravity-ide/Antigravity IDE/chrome-sandbox" 2>/dev/null || true
+    test -x "/apps/antigravity-ide/Antigravity IDE/antigravity-ide"
+
+    echo "Fetching Antigravity App 2.0 into /apps..."
+    mkdir -p /apps/antigravity-app
+    curl -fL "$ANTIGRAVITY_APP_URL" -o /tmp/agy-fetch/app.tar.gz
+    tar -xzf /tmp/agy-fetch/app.tar.gz -C /apps/antigravity-app
+    chmod 4755 /apps/antigravity-app/Antigravity-x64/chrome-sandbox 2>/dev/null || true
+    test -x /apps/antigravity-app/Antigravity-x64/antigravity
+
+    echo "Fetching Obsidian AppImage into /apps..."
+    mkdir -p /apps/obsidian
+    curl -fL "$OBSIDIAN_APPIMAGE_URL" -o /apps/obsidian/Obsidian.AppImage
+    chmod 755 /apps/obsidian/Obsidian.AppImage
+
+    echo "Fetching agy CLI into /apps..."
+    mkdir -p /apps/agy/bin /tmp/agy-fetch/agy-home
+    OLDHOME="${HOME:-/root}"
+    export HOME=/tmp/agy-fetch/agy-home
+    curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-fetch/agy-install.sh
+    bash /tmp/agy-fetch/agy-install.sh || true
+    AGY_BIN=""
+    for cand in "$HOME/.local/bin/agy" "$HOME/.gemini/bin/agy"; do
+      if [[ -x "$cand" ]]; then AGY_BIN="$cand"; break; fi
+    done
+    export HOME="$OLDHOME"
+    [[ -n "$AGY_BIN" ]] || { echo "agy CLI install failed" >&2; exit 1; }
+    cp -a "$AGY_BIN" /apps/agy/bin/agy
+    chmod 755 /apps/agy/bin/agy
 
     mkdir -p /usr/local/bin /opt/agy-stack/host-scripts
     install -m 0755 /opt/agy-stack/host-scripts/resolve-app.sh /usr/local/bin/agy-resolve-app
     install -m 0755 /opt/agy-stack/host-scripts/openrouter-proxy.sh /usr/local/bin/openrouter-proxy
     install -m 0755 /opt/agy-stack/host-scripts/agy.sh /usr/local/bin/agy
     install -m 0755 /opt/agy-stack/host-scripts/antigravity-ide.sh /usr/local/bin/antigravity-ide
+    install -m 0755 /opt/agy-stack/host-scripts/antigravity-app.sh /usr/local/bin/antigravity-app
     install -m 0755 /opt/agy-stack/host-scripts/obsidian-stack.sh /usr/local/bin/obsidian-stack
 
-    # Keep git/ssh; only drop dnf caches and docs to stay slim.
     dnf clean all
     rm -rf /var/cache/dnf /var/cache/yum /usr/share/doc /usr/share/man /usr/share/info \
-           /tmp/node.tgz
-    # Drop unused locales (keep C/UTF-8)
+           /tmp/node.tgz /tmp/agy-fetch
     find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'C*' -exec rm -rf {} + 2>/dev/null || true
 
 %environment
     export LC_ALL=C.UTF-8
     export CLOUD_CODE_URL=http://127.0.0.1:50999
-    export PATH=/usr/local/bin:$PATH
+    export PATH=/opt/agy-stack/host-scripts:/apps/node/bin:/usr/local/bin:$PATH
+    export NODE_BIN=/apps/node/bin/node
 
 %runscript
-    echo "agy-stack-box slim — ./scripts/fetch-apps.sh then start-*"
+    echo "agy-stack-box — scripts/agy-ide | agy-cli | agy-app (apps under /apps)"
     exec /bin/bash "$@"
