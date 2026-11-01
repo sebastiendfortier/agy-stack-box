@@ -75,6 +75,43 @@ else
 fi
 rm -rf "$HOME_SMOKETMP" "$TMP"
 
+# Gate: every shell script the deployer assembles must pass bash -n.
+# Catches unterminated quotes in embedded snippets before a maintainer hits
+# them months later on a real publish (SSM_KEEP echo once shipped unclosed).
+GATE_TMP=$(mktemp -d)
+SSM_DOMAIN_ROOT="<VALIDATION-ONLY>" python3 - "$GATE_TMP" <<'PYEOF' || echo "FAIL  deploy scripts assemblable" >&2
+import sys, io, contextlib, pathlib, re
+sys.path.insert(0, "ssm")
+import deploy_ssm_package as d
+outdir = pathlib.Path(sys.argv[1])
+(outdir / "prune.sh").write_text(d.PRUNE_SNIPPET)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    d.local_publish(pathlib.Path("/dev/null"), True)
+sections, cur = {}, None
+for line in buf.getvalue().splitlines():
+    if line.startswith("--- dry run:"):
+        cur = re.sub(r"\W+", "_", line.split(":", 1)[1].strip().split(" (")[0])
+        sections[cur] = []
+    elif cur:
+        sections[cur].append(line)
+for name, lines in sections.items():
+    while lines and not lines[-1].strip():
+        lines.pop()
+    (outdir / f"{name}.sh").write_text("\n".join(lines) + "\n")
+PYEOF
+GATE_OK=1
+for f in "$GATE_TMP"/*.sh; do
+  [ -e "$f" ] || { echo "FAIL  no deploy scripts extracted"; FAIL=$((FAIL+1)); GATE_OK=0; break; }
+  if bash -n "$f" 2>/dev/null; then
+    echo "PASS  bash -n $(basename "$f")"; PASS=$((PASS+1))
+  else
+    echo "FAIL  bash -n $(basename "$f")"; FAIL=$((FAIL+1)); GATE_OK=0
+  fi
+done
+[ "$GATE_OK" -eq 1 ] || true
+rm -rf "$GATE_TMP"
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 exit $(( FAIL > 0 ? 1 : 0 ))
