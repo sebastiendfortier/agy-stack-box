@@ -1,9 +1,9 @@
 # agy-stack-box
 
-A **slim** Singularity / Apptainer image (~runtime only) plus host-fetched apps under `state/apps/`:
+A Singularity / Apptainer image with apps baked under `/opt`:
 
-- **In the SIF:** OpenRouter BYOK proxy + Node + Electron shared libs
-- **In `state/apps/` (via `fetch-apps.sh`):** Antigravity IDE, Antigravity App 2.0, Obsidian AppImage, `agy` CLI
+- **In the SIF:** OpenRouter BYOK proxy + Node + Electron libs + Antigravity IDE, App 2.0, Obsidian AppImage, `agy` CLI
+- **Optional override:** `./scripts/fetch-apps.sh` → `state/apps/` (preferred by `agy-resolve-app` when present)
 
 Proxy and Obsidian REST bind loopback only. Default networking is **host net** (`AGY_NET_MODE=host`) — **no sudo**. Ports and instance name default **per-uid** so multiple users on one node do not collide.
 
@@ -30,7 +30,7 @@ Skip `enable-local-build.sh` and bridge mode. Prefer building the SIF on a lapto
 ./scripts/fetch-apps.sh
 ./scripts/fetch-skills.sh     # ponytail + caveman into state/ (+ host Cursor/agy when WIRE_HOST=1)
 ./scripts/seed-cmc-profile.sh # CMC modes + profile; prefers vault, falls back to harness/
-./scripts/start-services.sh   # AGY_NET_MODE=host by default — no sudo
+./scripts/start-services.sh   # AGY_NET_MODE=host by default — no sudo (or just run agy-ide)
 ```
 
 No workstation vault needed: `setup-config.sh` creates `VAULT_HOST_PATH` when missing and seeds `setup/`, `glossary/`, `agent-sessions/`, `adrs/`, `lessons/`, `runbooks/` from `harness/`. Re-run `./scripts/init-vault.sh [path]` any time to add missing stubs (never overwrites).
@@ -95,13 +95,14 @@ Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App URLs are in `scripts
 ### 3. Run
 
 ```bash
-./scripts/start-services.sh        # instance + proxy + Obsidian (no sudo)
-./scripts/start-ide.sh             # Antigravity IDE (edit + agent)
-./scripts/start-app.sh             # Antigravity App 2.0 (multi-agent desktop, no IDE)
-./scripts/start-cli.sh             # defaults to --model custom-openrouter-auto
-./scripts/start-cli.sh models
-./scripts/stop.sh
+./scripts/agy-ide                  # ensures instance + proxy + Obsidian, then IDE
+./scripts/agy-app                  # Antigravity App 2.0 (multi-agent desktop, no IDE)
+./scripts/agy-cli                  # defaults to --model custom-openrouter-auto
+./scripts/agy-cli models
+./scripts/agy-stop                 # or stop.sh (wrapper)
 ```
+
+Headless nodes (SSH login/ppp, no X11/Wayland): `ensure_services` skips the Obsidian GUI automatically — the vault stays bind-mounted and the CLI/proxy/router are unaffected (`AGY_FORCE_OBSIDIAN=1` overrides). IDE/App still need a display; run them on vis/ThinLinc.
 
 OpenRouter entries in the native picker / `agy models`:
 
