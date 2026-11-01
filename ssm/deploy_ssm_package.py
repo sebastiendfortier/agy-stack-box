@@ -134,6 +134,10 @@ echo "SSM_LATEST_OK $DOMAIN_ROOT/latest -> $VERDIR"
     if dry_run:
         print("--- dry run: local publish script ---")
         print(steps)
+        # Preview exactly what executes after publish: prune runs as a
+        # separate bash -c invocation (same content as the SSH path's tail).
+        print("--- dry run: local prune script (runs after publish) ---")
+        print(f'cd "{DOMAIN_ROOT}"\n{PRUNE_SNIPPET}')
         return
     fd, script = tempfile.mkstemp(suffix=".sh", prefix="agy_stack_publish_")
     os.close(fd)

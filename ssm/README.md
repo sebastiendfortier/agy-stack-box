@@ -58,3 +58,5 @@ Optional: `SSM_DEPLOY_SSH_TARGET=user@host` to deploy via SSH,
 Nothing auto-updates. A maintainer rebuilds the SIF with new upstream
 binaries, runs the feature gates (PLAN-SSM §6), publishes a new dated version,
 and flips `latest`. Rollback = repoint `latest`.
+Republishing the same date replaces that version dir (`rm -rf` + recreate
+before publish).
