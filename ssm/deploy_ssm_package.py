@@ -72,7 +72,8 @@ if [ "${{#VERS[@]}}" -gt "$KEEP" ]; then
     rm -rf "$old"
   done
 fi
-echo "SSM_KEEP $(compgen -G '[0-9][0-9][0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]' | sort -r | tr '\n' ' ')""".format(
+echo "SSM_KEEP $(compgen -G '[0-9][0-9][0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]' | sort -r | tr '\n' ' ')"
+""".format(
     keep=KEEP, name=NAME
 )
 
