@@ -43,18 +43,74 @@
       "maxRetries": 2
     },
     {
-      "name": "models/local-qwen",
-      "displayName": "HPC Qwen (local)",
+      "name": "models/auto-ladder",
+      "displayName": "Auto (SG Qwen → OpenRouter)",
       "provider": "openai",
       "apiFormat": "openai",
-      "apiUrl": "{{QWEN_BASE_URL}}/v1/chat/completions",
-      "apiKey": "local",
-      "externalModelName": "{{QWEN_MODEL}}",
-      "enabled": false,
+      "apiUrl": "http://127.0.0.1:{{ROUTER_PORT}}/v1/chat/completions",
+      "apiKey": "{{ROUTER_TOKEN}}",
+      "externalModelName": "auto",
+      "enabled": {{IHUB_ENABLED}},
+      "contextWindow": 200000,
+      "maxOutputTokens": 16384,
+      "timeout": 300000,
+      "maxRetries": 0
+    },
+    {
+      "name": "models/ihub-qwen3.8-27b",
+      "displayName": "iHub Qwen3.8 27B",
+      "provider": "openai",
+      "apiFormat": "openai",
+      "apiUrl": "{{IHUB_BASE_URL}}/chat/completions",
+      "apiKey": "{{IHUB_API_KEY}}",
+      "externalModelName": "ihub/qwen3.8-27b",
+      "enabled": {{IHUB_ENABLED}},
       "contextWindow": 131072,
       "maxOutputTokens": 16384,
       "timeout": 300000,
-      "maxRetries": 1
+      "maxRetries": 2
+    },
+    {
+      "name": "models/ihub-north-mini-code-1.0",
+      "displayName": "iHub North Mini Code 1.0",
+      "provider": "openai",
+      "apiFormat": "openai",
+      "apiUrl": "{{IHUB_BASE_URL}}/chat/completions",
+      "apiKey": "{{IHUB_API_KEY}}",
+      "externalModelName": "ihub/north-mini-code-1.0",
+      "enabled": {{IHUB_ENABLED}},
+      "contextWindow": 131072,
+      "maxOutputTokens": 16384,
+      "timeout": 300000,
+      "maxRetries": 2
+    },
+    {
+      "name": "models/sg-qwen3.8-27b",
+      "displayName": "iHub SG Qwen3.8 27B",
+      "provider": "openai",
+      "apiFormat": "openai",
+      "apiUrl": "{{IHUB_BASE_URL}}/chat/completions",
+      "apiKey": "{{IHUB_API_KEY}}",
+      "externalModelName": "sg/qwen3.8-27b",
+      "enabled": {{IHUB_ENABLED}},
+      "contextWindow": 131072,
+      "maxOutputTokens": 16384,
+      "timeout": 300000,
+      "maxRetries": 2
+    },
+    {
+      "name": "models/ihub-nomic-embed-text-v1.5",
+      "displayName": "iHub Nomic Embed Text v1.5 (embedding)",
+      "provider": "openai",
+      "apiFormat": "openai",
+      "apiUrl": "{{IHUB_BASE_URL}}/embeddings",
+      "apiKey": "{{IHUB_API_KEY}}",
+      "externalModelName": "ihub/nomic-embed-text-v1.5",
+      "enabled": {{IHUB_ENABLED}},
+      "contextWindow": 8192,
+      "maxOutputTokens": 0,
+      "timeout": 120000,
+      "maxRetries": 2
     }
   ]
 }
