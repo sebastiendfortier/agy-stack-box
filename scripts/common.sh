@@ -283,8 +283,17 @@ prepare_stack_bin() {
     cp -a "$ROOT/apptainer/rootfs-scripts/${s}.sh" "$d/$s"
     chmod +x "$d/$s"
   done
+  cp -a "$ROOT/apptainer/rootfs-scripts/gui-session.sh" "$d/gui-session.sh"
   cp -a "$ROOT/apptainer/rootfs-scripts/resolve-app.sh" "$d/agy-resolve-app"
   chmod +x "$d/agy-resolve-app"
+  # Built on the host: /usr and /lib inside the instance are the host's.
+  local noshm_src="$ROOT/apptainer/rootfs-scripts/noshm.c" noshm_out="$d/libnoshm.so"
+  if [[ ! -f "$noshm_out" || "$noshm_src" -nt "$noshm_out" ]]; then
+    if ! gcc -shared -fPIC -O2 -o "$noshm_out" "$noshm_src" >/dev/null; then
+      echo "warning: failed to build libnoshm.so (MIT-SHM guard disabled)" >&2
+      rm -f "$noshm_out"
+    fi
+  fi
 }
 
 script_binds() {
