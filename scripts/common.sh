@@ -70,6 +70,10 @@ sync_gemini_to_home() {
     "$HOST_HOME/.gemini/antigravity" \
     "$HOST_HOME_REAL/.gemini/antigravity"; do
     [[ -n "$dest" ]] || continue
+    # If source and destination point to the exact same file/dir (e.g. bind mount or symlink), skip cp
+    if [[ -d "$dest" ]] && python3 -c "import os, sys; sys.exit(0 if os.path.samefile(sys.argv[1], sys.argv[2]) else 1)" "$src" "$dest" 2>/dev/null; then
+      continue
+    fi
     mkdir -p "$dest"
     [[ -f "$src/custom_models.json" ]] && cp -a "$src/custom_models.json" "$dest/"
     [[ -f "$src/mcp_config.json" ]] && cp -a "$src/mcp_config.json" "$dest/"
@@ -413,17 +417,19 @@ instance_runtime_env() {
   if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
     envargs+=(--env "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR")
   fi
-  # Science proxy for Google OAuth webview / HTTPS (HPC often has no direct egress).
-  # Prefer already-exported values; otherwise use the site webproxy.
-  local _http_proxy="${http_proxy:-${HTTP_PROXY:-http://webproxy.science.gc.ca:8888/}}"
+  # Honor caller-configured proxy values; site-specific defaults belong in the
+  # caller's environment, not in this reusable package.
+  local _http_proxy="${http_proxy:-${HTTP_PROXY:-}}"
   local _https_proxy="${https_proxy:-${HTTPS_PROXY:-$_http_proxy}}"
+  local _no_proxy="${no_proxy:-${NO_PROXY:-localhost,127.0.0.1,::1}}"
   # Comma-separated values CANNOT use singularity/apptainer --env (comma splits KEY=VAL list).
   # Pass them via APPTAINERENV_* / SINGULARITYENV_* instead.
-  local _no_proxy="${no_proxy:-${NO_PROXY:-localhost,127.0.0.1,::1}}"
-  envargs+=(--env "http_proxy=$_http_proxy")
-  envargs+=(--env "https_proxy=$_https_proxy")
-  envargs+=(--env "HTTP_PROXY=$_http_proxy")
-  envargs+=(--env "HTTPS_PROXY=$_https_proxy")
+  if [[ -n "$_http_proxy" ]]; then
+    envargs+=(--env "http_proxy=$_http_proxy" --env "HTTP_PROXY=$_http_proxy")
+  fi
+  if [[ -n "$_https_proxy" ]]; then
+    envargs+=(--env "https_proxy=$_https_proxy" --env "HTTPS_PROXY=$_https_proxy")
+  fi
   envargs+=(--env "BROWSER=${BROWSER:-firefox}")
   export APPTAINERENV_no_proxy="$_no_proxy" SINGULARITYENV_no_proxy="$_no_proxy"
   export APPTAINERENV_NO_PROXY="$_no_proxy" SINGULARITYENV_NO_PROXY="$_no_proxy"
