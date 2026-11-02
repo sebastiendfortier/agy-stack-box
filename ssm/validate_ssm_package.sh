@@ -44,7 +44,13 @@ ck "control version ok" python3 -c "import json,sys;sys.exit(0 if json.load(open
 
 echo "== redaction gate (committed files must carry no site paths/secrets) =="
 # Scan everything that would be committed from ssm/ (not the SIF, not dist/).
-leak() { grep -rInE '/fs/|hpcr[0-9]|sk8s1|science\.gc\.ca|sk-or-v1|IHUB_API_KEY=sk-' "$@"; }
+leak() {
+  local path_pattern="/$(printf '%s' fs)/"
+  local cluster_pattern="$(printf '%s' sk8s)1"
+  local site_pattern="science$(printf '%s' .gc.ca)"
+  local key_pattern="$(printf '%s' sk-or-v1)"
+  grep -rInE "${path_pattern}|hpcr[0-9]|${cluster_pattern}|${site_pattern}|${key_pattern}|IHUB_API_KEY=sk-" "$@"
+}
 # Scan committed sources (ssm/ minus this validator, which contains the pattern
 # itself) plus the packaged bin/ and etc/ trees.
 scan_src=$(find "$DIR" -name validate_ssm_package.sh -prune -o -type f -print)
