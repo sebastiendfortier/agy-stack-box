@@ -7,7 +7,7 @@
 // openrouter/auto only when the cheap model proves inadequate.
 //
 // Two kinds of escalation:
-//   breadth  — decide before calling (prompt size, images, tool load, sticky)
+//   breadth  — decide before calling (prompt size, images, sticky)
 //   depth    — decide after calling, but only before bytes reach the client
 //
 // Zero dependencies: Node >= 18 globals only (fetch, crypto, http).
@@ -17,6 +17,8 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const MAX_BODY_BYTES = 32 * 1024 * 1024;
 
@@ -50,8 +52,10 @@ function readConfig(path) {
     maxHoldMs: 1500,
     escalationTtlMs: 5 * 60 * 1000,
     largePromptTokens: 60000,
-    maxToolsForSmall: 12,
     repetitionMinRepeats: 3,
+    // When the top rung is unusable (no credits, no key, provider down), retry
+    // the free rung instead of returning an empty answer. See buildPlan().
+    fallbackDown: true,
     refusalPatterns: [
       "\\bI can'(?:t| not)\\b",
       '\\bI cannot\\b',
@@ -60,17 +64,13 @@ function readConfig(path) {
       "\\bI do(?:n't| not) have (?:access|the ability)\\b",
       '\\bas an AI\\b',
     ],
-    actionIntentPatterns: [
-      '\\b(edit|write|create|delete|remove|rename|move|fix|patch|update|implement|add|refactor)\\b',
-      '\\b(run|execute|install|build|compile|test|lint|deploy)\\b',
-      '\\b(read|open|inspect|search|grep|find|list)\\b',
-    ],
     ...(raw.policy || {}),
   };
   return { ...raw, policy };
 }
 
 const config = readConfig(CONFIG_PATH);
+const clock = { now: () => Date.now() };
 const tiers = (config.tiers || []).map((t, i) => ({
   index: i,
   name: t.name || `tier${i}`,
@@ -93,6 +93,28 @@ function keyFor(tier) {
   if (tier.apiKeyEnv && process.env[tier.apiKeyEnv]) return process.env[tier.apiKeyEnv];
   return '';
 }
+
+// A tier is usable only if the credential it declares is actually present.
+// A tier with no apiKeyEnv expects no credential (e.g. a local endpoint), so it
+// counts as configured. This is what stops a missing OPENROUTER_API_KEY from
+// turning into a stream of 401s at request time.
+function tierConfigured(tier) {
+  if (tier.apiKey) return true;
+  if (!tier.apiKeyEnv) return true;
+  return Boolean(process.env[tier.apiKeyEnv]);
+}
+
+const NO_CREDENTIALS_MSG =
+  'No model credentials configured: set IHUB_API_KEY and/or OPENROUTER_API_KEY ' +
+  'in state/secrets.env, then re-run ./scripts/setup-config.sh.';
+
+// Shown when every rung failed. The router cannot call Google's built-in
+// models itself (they authenticate with the Antigravity account, not an API
+// key), so the only useful thing left is to tell the user where to go.
+const FALLBACK_HINT =
+  'No model answered: the free iHub tier and the OpenRouter tier both failed. ' +
+  'Switch to a Google model in the model picker — those run on your Antigravity ' +
+  'account and need no OpenRouter credits.';
 
 // ---------------------------------------------------------------------------
 // logging
@@ -174,15 +196,20 @@ const sticky = new Map(); // key -> expiry epoch ms
 function isSticky(key) {
   const until = sticky.get(key);
   if (!until) return false;
-  if (Date.now() > until) {
+  if (clock.now() > until) {
     sticky.delete(key);
     return false;
   }
   return true;
 }
 function markSticky(key, reason) {
-  sticky.set(key, Date.now() + config.policy.escalationTtlMs);
+  sticky.set(key, clock.now() + config.policy.escalationTtlMs);
   log(`sticky ${key} (${reason}) for ${Math.round(config.policy.escalationTtlMs / 1000)}s`);
+}
+// A fallback that succeeded proves the top rung is not worth starting on right
+// now, so drop the sticky entry instead of paying for one failed call per turn.
+function clearSticky(key, reason) {
+  if (sticky.delete(key)) log(`cleared sticky ${key} (${reason})`);
 }
 
 const stats = {
@@ -191,8 +218,9 @@ const stats = {
   byTier: {},
   escalations: 0,
   escalationReasons: {},
+  fallbacks: 0,
+  degraded: 0,
   failures: 0,
-  judge: { calls: 0, hard: 0, easy: 0, failed: 0 },
 };
 function bump(obj, k) {
   obj[k] = (obj[k] || 0) + 1;
@@ -223,14 +251,15 @@ function chooseStart(messages, body) {
     start = tiers.length - 1;
     notes.push(`prompt>${config.policy.largePromptTokens}tok`);
   }
-  if (needsTools && tools > config.policy.maxToolsForSmall) {
-    start = Math.max(start, 1 < tiers.length ? 1 : 0);
-    notes.push(`tools=${tools}`);
-  }
-  // Skip tiers whose context window can't hold the prompt, or that we know
-  // can't do tool calls when a tool call is required.
+  // Skip tiers whose context window can't hold the prompt, that we know can't
+  // do tool calls when a tool call is required, or whose credential is absent.
   while (start < tiers.length - 1) {
     const t = tiers[start];
+    if (!tierConfigured(t)) {
+      notes.push(`${t.name}:no-key`);
+      start++;
+      continue;
+    }
     if (tokens * 1.2 > t.contextWindow) {
       notes.push(`${t.name}:no-context`);
       start++;
@@ -243,150 +272,43 @@ function chooseStart(messages, body) {
     }
     break;
   }
+  // Sticky/image/large-prompt jumps land on the top rung. If that rung has no
+  // credential, walk back down to the best usable one instead of failing.
+  if (!tierConfigured(tiers[start])) {
+    for (let i = start; i >= 0; i--) {
+      if (tierConfigured(tiers[i])) {
+        notes.push(`${tiers[start].name}:no-key->${tiers[i].name}`);
+        start = i;
+        break;
+      }
+    }
+  }
   return { start, key, notes, needsTools, tokens };
 }
-
-// ---------------------------------------------------------------------------
-// difficulty judge: ask the free tier to rate the task before we trust its answer
-// ---------------------------------------------------------------------------
-//
-// Runs concurrently with the real attempt, so it adds no latency. Its verdict
-// only matters while the answer is still in the hold buffer — if the judge says
-// "hard", we drop the cheap answer before a single byte reaches the client.
-
-const JUDGE_MARKER = 'ROUTING_JUDGE';
-
-const JUDGE_SYSTEM = [
-  'ROUTING_JUDGE',
-  'You classify how hard a request is for a small 27B coding model.',
-  'Answer with STRICT JSON only, no prose:',
-  '{"difficulty":"easy"|"hard","confidence":0.0-1.0,"why":"<10 words>"}',
-  '',
-  'Call it "hard" when the request needs ANY of:',
-  '- reasoning about behaviour across several files or an unknown codebase',
-  '- debugging where the cause is not given',
-  '- design/architecture trade-offs or a plan',
-  '- writing non-trivial code, or a refactor with judgement calls',
-  '- ambiguity: the request does not say what/where concretely',
-  '- long context, several constraints to satisfy at once',
-  '',
-  'Call it "easy" when the request is:',
-  '- a single concrete mechanical action (read/open/list/grep a named thing)',
-  '- run one command and report',
-  '- a small edit with the target and intent stated',
-  '- a definition or short factual explanation',
-  '- a follow-up to something already established',
-  '',
-  'When genuinely unsure, answer "hard".',
-].join('\n');
-
-function judgeConfigActive() {
-  const j = config.judge;
-  return Boolean(j && j.enabled);
-}
-
-function parseVerdict(text) {
-  if (!text) return null;
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end <= start) return null;
-  try {
-    const obj = JSON.parse(text.slice(start, end + 1));
-    const difficulty = String(obj.difficulty || '').toLowerCase();
-    if (difficulty !== 'easy' && difficulty !== 'hard') return null;
-    const confidence = Number.isFinite(Number(obj.confidence)) ? Number(obj.confidence) : 0.5;
-    return { difficulty, confidence, why: String(obj.why || '').slice(0, 80) };
-  } catch {
-    return null;
-  }
-}
-
-function judgeTier() {
-  const j = config.judge || {};
-  if (j.tier) {
-    const found = tiers.find((t) => t.name === j.tier);
-    if (found) return found;
-  }
-  return tiers[0];
-}
-
-async function askJudge(body) {
-  const j = config.judge || {};
-  const tier = judgeTier();
-  const threshold = Number.isFinite(Number(j.threshold)) ? Number(j.threshold) : 0.6;
-  const lastUser = lastUserText(body.messages).slice(0, 4000);
-  if (!lastUser.trim()) return null;
-
-  const toolNames = allowedToolNames(body);
-  const contextLine = [
-    `turn_number=${(body.messages || []).filter((m) => m?.role === 'user').length}`,
-    `prompt_chars=${estimateTokens(body.messages) * 4}`,
-    `tools_available=${toolNames ? toolNames.size : 0}`,
-  ].join(' ');
-
-  stats.judge.calls++;
-  try {
-    const res = await postUpstream(tier, {
-      model: tier.model,
-      messages: [
-        { role: 'system', content: JUDGE_SYSTEM },
-        { role: 'user', content: `${contextLine}\n\nREQUEST:\n${lastUser}` },
-      ],
-      max_tokens: Number.isFinite(Number(j.maxTokens)) ? Number(j.maxTokens) : 2048,
-      temperature: 0,
-    });
-    if (!res.ok) {
-      stats.judge.failed++;
-      return null;
-    }
-    const json = await res.json();
-    const text = json?.choices?.[0]?.message?.content || '';
-    const verdict = parseVerdict(text);
-    if (!verdict) {
-      stats.judge.failed++;
-      return null;
-    }
-    const hard = verdict.difficulty === 'hard' && verdict.confidence >= threshold;
-    if (hard) stats.judge.hard++;
-    else stats.judge.easy++;
-    log(`judge ${tier.name}: ${verdict.difficulty} conf=${verdict.confidence} -> ${hard ? 'escalate' : 'keep'} (${verdict.why})`);
-    return { ...verdict, hard };
-  } catch (err) {
-    stats.judge.failed++;
-    log(`judge failed (${err?.message || err}) — staying on the cheap tier`);
-    return null;
-  }
-}
-
 
 // ---------------------------------------------------------------------------
 // post-flight: is this answer good enough?
 // ---------------------------------------------------------------------------
 
+const DEPTH_RULES = [
+  ['httpError', (value) => `http:${value}`],
+  ['emptied', () => 'empty'],
+  ['truncated', () => 'truncated'],
+  ['badToolCall', (value) => `bad-tool:${value}`],
+  ['toolNotAllowed', (value) => `tool-not-allowed:${value}`],
+  ['refusal', () => 'refusal'],
+  ['repetition', () => 'repetition'],
+];
+
 function evaluateDepth(state) {
-  const p = config.policy;
   const hard = [];
-  const soft = [];
-
-  if (state.httpError) hard.push(`http:${state.httpError}`);
-  if (state.emptied) hard.push('empty');
-  if (state.truncated) hard.push('truncated');
-  if (state.badToolCall) hard.push(`bad-tool:${state.badToolCall}`);
-  if (state.toolNotAllowed) hard.push(`tool-not-allowed:${state.toolNotAllowed}`);
-
-  // A refusal or a degenerate loop is decisive on its own: the model has
-  // declared it won't, or has visibly broken. No second signal needed.
-  if (state.refusal) hard.push('refusal');
-  if (state.repetition) hard.push('repetition');
-  if (state.missingToolCall) hard.push('no-tool-call');
-  if (state.judgeHard) hard.push('judge:hard');
-  if (state.shortAnswer) soft.push('very-short');
-
-  return { escalate: hard.length > 0 || soft.length >= 2, hard, soft };
+  for (const [field, reason] of DEPTH_RULES) {
+    if (state[field]) hard.push(reason(state[field]));
+  }
+  return { escalate: hard.length > 0, hard, soft: [] };
 }
 
 const REFUSAL_RE = () => config.policy.refusalPatterns;
-const INTENT_RE = () => config.policy.actionIntentPatterns;
 
 function detectRepetition(text) {
   // Short answers can still be degenerate: three identical meaningful lines
@@ -457,7 +379,7 @@ async function attemptNonStream(tier, body, ctx) {
   try {
     res = await postUpstream(tier, body);
   } catch (err) {
-    return { state: { httpError: `network:${err?.message || err}` }, json: null, res: null };
+    return { state: { httpError: err?.name === 'AbortError' ? 'timeout' : 'network' }, json: null, res: null };
   }
   if (!res.ok) {
     let detail = '';
@@ -473,21 +395,21 @@ async function attemptNonStream(tier, body, ctx) {
     return { state: { httpError: 'bad-json' }, json: null, res };
   }
 
-  const choice = json?.choices?.[0] || {};
-  const msg = choice.message || {};
+  const choice = json?.choices?.[0];
+  if (!choice || typeof choice !== 'object' || !choice.message || typeof choice.message !== 'object') {
+    return { state: { httpError: 'bad-payload' }, json: null, res };
+  }
+  const msg = choice.message;
   const content = typeof msg.content === 'string' ? msg.content : '';
   const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
   const allowed = allowedToolNames(body);
 
   const state = {};
-  if (!content.trim() && toolCalls.length === 0) state.emptied = true;
+  const reasoning = typeof msg.reasoning_content === 'string' ? msg.reasoning_content : '';
+  if (!content.trim() && !reasoning.trim() && toolCalls.length === 0) state.emptied = true;
   if (choice.finish_reason === 'length') state.truncated = true;
   if (matchesAny(content, REFUSAL_RE())) state.refusal = true;
   if (detectRepetition(content)) state.repetition = true;
-  if (ctx.needsTools && toolCalls.length === 0 && matchesAny(lastUserText(body.messages), INTENT_RE())) {
-    state.missingToolCall = true;
-  }
-  if (content.trim() && content.trim().length < 12 && toolCalls.length === 0) state.shortAnswer = true;
 
   for (const tc of toolCalls) {
     const name = tc?.function?.name;
@@ -540,7 +462,7 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
   try {
     upstream = await postUpstream(tier, body);
   } catch (err) {
-    return { state: { httpError: `network:${err?.message || err}` } };
+    return { state: { httpError: err?.name === 'AbortError' ? 'timeout' : 'network' } };
   }
   if (!upstream.ok) {
     let detail = '';
@@ -555,8 +477,9 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
   const state = {};
   const held = [];
   let heldText = '';
+  let heldReasoning = '';
   let committed = false;
-  const startedAt = Date.now();
+  const startedAt = clock.now();
 
   const toolAcc = new Map(); // index -> { name, args }
   let finishReason = null;
@@ -573,6 +496,7 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
   const dec = new TextDecoder();
   let buf = '';
   let sawDone = false;
+  let sawChoice = false;
 
   try {
     while (true) {
@@ -583,12 +507,6 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
       buf = rest;
 
       for (const frame of frames) {
-        // The judge may finish while we are still holding: drop the cheap
-        // answer and let the caller escalate, before anything is committed.
-        if (!committed && ctx.judgeState?.verdict?.hard) {
-          try { await reader.cancel(); } catch {}
-          return { state: { judgeHard: true }, committed: false };
-        }
         const trimmed = frame.trim();
         if (trimmed.startsWith('data:')) {
           const data = trimmed.slice(5).trim();
@@ -601,8 +519,14 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
           try {
             const obj = JSON.parse(data);
             const choice = obj?.choices?.[0];
-            const delta = choice?.delta || {};
+            if (!choice || typeof choice !== 'object' || (choice.delta && typeof choice.delta !== 'object')) {
+              state.httpError = 'bad-payload';
+              continue;
+            }
+            sawChoice = true;
+            const delta = choice.delta || {};
             if (typeof delta.content === 'string' && delta.content) heldText += delta.content;
+            if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) heldReasoning += delta.reasoning_content;
             for (const tc of delta.tool_calls || []) {
               const slot = toolAcc.get(tc.index ?? 0) || { name: '', args: '' };
               if (tc.function?.name) slot.name = tc.function.name;
@@ -618,8 +542,8 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
                   try { JSON.parse(s.args); return true; } catch { return false; }
                 })()));
               const enoughText = heldText.length >= p.commitAfterChars;
-              const timedOut = Date.now() - startedAt > p.maxHoldMs && (heldText.length > 0 || toolAcc.size > 0);
-              if (toolsComplete || enoughText || timedOut) commit();
+              const timedOut = clock.now() - startedAt > p.maxHoldMs && (heldText.length > 0 || toolAcc.size > 0);
+              if (!state.httpError && (toolsComplete || enoughText || timedOut)) commit();
             }
           } catch {
             if (!committed) {
@@ -633,22 +557,18 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
       }
     }
   } catch (err) {
-    if (!committed) return { state: { httpError: `stream:${err?.message || err}` } };
+    if (!committed) return { state: { httpError: 'stream' } };
     log('stream error after commit (unrecoverable):', err?.message || err);
     return { state: {}, committed: true };
   }
 
   // ---- end of stream: evaluate ----
   if (!committed) {
-    if (ctx.judgeState?.verdict?.hard) state.judgeHard = true;
-    if (!heldText.trim() && toolAcc.size === 0) state.emptied = true;
+    if (sawDone && !sawChoice) state.httpError = 'bad-payload';
+    if (!heldText.trim() && !heldReasoning.trim() && toolAcc.size === 0) state.emptied = true;
     if (finishReason === 'length') state.truncated = true;
     if (matchesAny(heldText, REFUSAL_RE())) state.refusal = true;
     if (detectRepetition(heldText)) state.repetition = true;
-    if (ctx.needsTools && toolAcc.size === 0 && matchesAny(lastUserText(body.messages), INTENT_RE())) {
-      state.missingToolCall = true;
-    }
-    if (heldText.trim() && heldText.trim().length < 12 && toolAcc.size === 0) state.shortAnswer = true;
     for (const s of toolAcc.values()) {
       if (!s.name) state.badToolCall = 'no-name';
       else if (allowed && !allowed.has(s.name)) state.toolNotAllowed = s.name;
@@ -667,33 +587,110 @@ async function attemptStream(tier, body, ctx, res, clientModel, begin) {
 // main routing loop
 // ---------------------------------------------------------------------------
 
+// Attempt plan: start at the chosen rung, climb to the top, then — if the top
+// rung turns out to be unusable — come back down to the free rung once. Without
+// that last step a dead OpenRouter key turns every escalated turn into a blank
+// answer. FALLBACK_HINT is what the user sees when even that fails.
+function buildPlan(start) {
+  const plan = [];
+  for (let i = start; i < tiers.length; i++) {
+    if (!tierConfigured(tiers[i])) continue;
+    plan.push({ tier: i, kind: i === start ? 'start' : 'escalate' });
+  }
+  const lastTier = plan.length ? plan[plan.length - 1].tier : -1;
+  const canFallBack =
+    config.policy.fallbackDown !== false &&
+    tiers.length > 1 &&
+    lastTier !== 0 &&
+    tierConfigured(tiers[0]);
+  if (canFallBack) plan.push({ tier: 0, kind: 'fallback' });
+  return plan;
+}
+
+// Did this attempt produce something we can hand to the client? An empty
+// completion is a failure even though the HTTP call itself succeeded.
+function isUsable(out, stream) {
+  if (out.state.emptied || out.state.httpError) return false;
+  if (stream) return Boolean(out.held && out.held.length);
+  return Boolean(out.json);
+}
+
+function safeSignal(reason) {
+  return String(reason || 'unusable').replace(/[^a-zA-Z0-9:_-]/g, '_').slice(0, 80);
+}
+
+function emitAuthFailure(res, tried) {
+  res.writeHead(502, {
+    'content-type': 'application/json',
+    ...(tried.length ? { 'x-router-escalated-from': tried.join(' ') } : {}),
+  });
+  res.end(JSON.stringify({ error: { message: 'Model provider authentication failed.', type: 'upstream_error', code: 'provider_auth' } }));
+}
+
+// Every rung failed. Say so, and point at the one thing that still works.
+function emitExhausted(res, failed, tried) {
+  const detail =
+    failed.map((f) => `${f.tier}:${f.reasons.join(',')}`).join(' | ') || 'no attempt';
+  log(`all tiers failed: ${detail}`);
+  stats.failures++;
+  const message = FALLBACK_HINT;
+  if (res.headersSent) {
+    try {
+      res.write(`data: ${JSON.stringify({ error: { message, type: 'upstream_error' } })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    } catch {}
+    return;
+  }
+  res.writeHead(502, {
+    'content-type': 'application/json',
+    ...(tried.length ? { 'x-router-escalated-from': tried.join(' ') } : {}),
+  });
+  res.end(JSON.stringify({ error: { message, type: 'upstream_error', code: 'all_tiers_failed' } }));
+}
+
 async function route(body, res) {
   stats.requests++;
-  const { start, key, notes, needsTools } = chooseStart(body.messages, body);
-  const stream = body.stream === true;
-  const clientModel = body.model || 'auto';
-  const tried = [];
 
-  // Difficulty judge: one extra request to the free tier, fired in parallel
-  // with the first (cheapest) attempt so it costs no wall-clock latency.
-  let judgeP = null;
-  const judgeState = { verdict: null };
-  if (judgeConfigActive() && start < tiers.length - 1) {
-    judgeP = askJudge(body)
-      .then((v) => {
-        judgeState.verdict = v;
-        return v;
-      })
-      .catch(() => null);
+  if (!tiers.some(tierConfigured)) {
+    log('no model credentials configured — refusing to guess');
+    res.writeHead(503, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: NO_CREDENTIALS_MSG, type: 'configuration_error' } }));
+    return;
   }
 
-  for (let i = start; i < tiers.length; i++) {
-    const tier = tiers[i];
+  const { start, key, notes, needsTools } = chooseStart(body.messages, body);
+  // TODO(PLAN-SSM §4): upstream retry intent has no supported request marker;
+  // do not infer a retry from identical messages.
+  const stream = body.stream === true;
+  const clientModel = body.model || 'auto';
+  const plan = buildPlan(start);
+  const missingKeyNote = notes.find((note) => note.endsWith(':no-key') || note.includes(':no-key->'));
+  const preflightDegraded = missingKeyNote
+    ? `${safeSignal(missingKeyNote.split(':')[0])}:no-key`
+    : null;
+  const tried = [];
+  const failed = [];
+
+
+  for (let p = 0; p < plan.length; p++) {
+    const { tier: ti, kind } = plan[p];
+    const tier = tiers[ti];
+    const isLast = p === plan.length - 1;
+    // Known before the attempt: we only reach a fallback because a rung failed.
+    const degraded = kind === 'fallback' && failed.length
+      ? `${failed[0].tier}:${safeSignal(failed[0].reasons[0])}`
+      : p === 0 ? preflightDegraded : null;
+    if (kind === 'fallback') {
+      stats.fallbacks++;
+      log(`fall back down to ${tier.name} (${degraded})`);
+    }
     bump(stats.byTier, tier.name);
-    const ctx = { needsTools, key, notes, judgeState };
+    const ctx = { needsTools, key, notes };
 
     if (stream) {
       let began = false;
+      let headerDegraded = degraded;
       const begin = () => {
         if (began) return;
         began = true;
@@ -703,6 +700,7 @@ async function route(body, res) {
           connection: 'keep-alive',
           'x-router-tier': tier.name,
           ...(tried.length ? { 'x-router-escalated-from': tried.join(' ') } : {}),
+          ...(headerDegraded ? { 'x-router-degraded': headerDegraded } : {}),
         });
       };
 
@@ -713,61 +711,81 @@ async function route(body, res) {
         return;
       }
       // Judge may still be in flight for a fast model — settle it before deciding.
-      if (judgeP) await judgeP;
-      if (judgeState.verdict?.hard) out.state.judgeHard = true;
+      if (out.state.httpError === '401' || out.state.httpError === '403') {
+        emitAuthFailure(res, tried);
+        return;
+      }
       const verdict = evaluateDepth(out.state);
-      if (verdict.escalate && i < tiers.length - 1) {
-        tried.push(`${tier.name}:${[...verdict.hard, ...verdict.soft].join(',')}`);
-        stats.escalations++;
-        for (const r of [...verdict.hard, ...verdict.soft]) bump(stats.escalationReasons, r);
-        log(`escalate ${tier.name} -> ${tiers[i + 1].name} [${[...verdict.hard, ...verdict.soft].join(',')}]`);
-        markSticky(key, verdict.hard[0] || verdict.soft[0]);
+      const reasons = [...verdict.hard];
+      const usable = isUsable(out, stream);
+
+      if (!usable || (verdict.escalate && !isLast)) {
+        failed.push({ tier: tier.name, reasons: usable ? reasons : [...reasons, 'unusable'] });
+        for (const r of reasons) bump(stats.escalationReasons, r);
+        if (!isLast) {
+          tried.push(`${tier.name}:${reasons.join(',')}`);
+          stats.escalations++;
+          log(`escalate ${tier.name} -> ${tiers[plan[p + 1].tier].name} [${reasons.join(',')}]`);
+          continue;
+        }
+        log(`last attempt unusable on ${tier.name} [${reasons.join(',')}]`);
         continue;
       }
-      // Accept this tier's output: nothing was flushed yet, so replay it now.
+
+      // Accept: nothing was flushed yet, so replay the held frames now.
+      if (verdict.escalate) headerDegraded = headerDegraded || safeSignal(reasons[0]);
       begin();
-      if (out.held && out.held.length) {
-        for (const f of out.held) res.write(rewriteModel(f, clientModel));
-      } else if (out.state.httpError || out.state.emptied) {
-        stats.failures++;
-        res.write(`data: ${JSON.stringify({ choices: [{ delta: { role: 'assistant', content: '' }, index: 0, finish_reason: 'stop' }] })}\n\n`);
+      if (headerDegraded) {
+        stats.degraded++;
+        log(`serving degraded answer from ${tier.name} (${headerDegraded})`);
       }
+      for (const f of out.held) res.write(rewriteModel(f, clientModel));
       res.write('data: [DONE]\n\n');
       res.end();
+      if (ti > 0) markSticky(key, failed[0]?.reasons[0] || 'escalated');
+      else if (kind === 'fallback') clearSticky(key, 'fallback succeeded');
       return;
     }
 
     const out = await attemptNonStream(tier, body, ctx);
-    if (judgeP) await judgeP;
-    if (judgeState.verdict?.hard) out.state.judgeHard = true;
-    const verdict = evaluateDepth(out.state);
-    if (verdict.escalate && i < tiers.length - 1) {
-      tried.push(`${tier.name}:${[...verdict.hard, ...verdict.soft].join(',')}`);
-      stats.escalations++;
-      for (const r of [...verdict.hard, ...verdict.soft]) bump(stats.escalationReasons, r);
-      log(`escalate ${tier.name} -> ${tiers[i + 1].name} [${[...verdict.hard, ...verdict.soft].join(',')}]`);
-      markSticky(key, verdict.hard[0] || verdict.soft[0]);
-      continue;
-    }
-    if (out.json) {
-      out.json.model = clientModel;
-      res.setHeader('x-router-tier', tier.name);
-      if (tried.length) res.setHeader('x-router-escalated-from', tried.join(' '));
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify(out.json));
+    if (out.state.httpError === '401' || out.state.httpError === '403') {
+      emitAuthFailure(res, tried);
       return;
     }
-    // Exhausted ladder.
-    stats.failures++;
-    const detail = out.detail || JSON.stringify(out.state);
-    log('all tiers failed:', detail);
+    const verdict = evaluateDepth(out.state);
+    const reasons = [...verdict.hard];
+    const usable = isUsable(out, stream);
+
+    if (!usable || (verdict.escalate && !isLast)) {
+      failed.push({ tier: tier.name, reasons: usable ? reasons : [...reasons, 'unusable'] });
+      for (const r of reasons) bump(stats.escalationReasons, r);
+      if (!isLast) {
+        tried.push(`${tier.name}:${reasons.join(',')}`);
+        stats.escalations++;
+        log(`escalate ${tier.name} -> ${tiers[plan[p + 1].tier].name} [${reasons.join(',')}]`);
+        continue;
+      }
+      log(`last attempt unusable on ${tier.name} [${reasons.join(',')}]`);
+      continue;
+    }
+
+    out.json.model = clientModel;
     res.setHeader('x-router-tier', tier.name);
-    res.writeHead(502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: { message: `model-router: all tiers failed (${detail})`, type: 'upstream_error' } }));
+    if (tried.length) res.setHeader('x-router-escalated-from', tried.join(' '));
+    const warn = degraded || (verdict.escalate ? safeSignal(reasons[0]) : null);
+    if (warn) {
+      stats.degraded++;
+      res.setHeader('x-router-degraded', warn);
+      log(`serving degraded answer from ${tier.name} (${warn})`);
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(out.json));
+    if (ti > 0) markSticky(key, failed[0]?.reasons[0] || 'escalated');
+    else if (kind === 'fallback') clearSticky(key, 'fallback succeeded');
     return;
   }
-  res.writeHead(502, { 'content-type': 'application/json' });
-  res.end(JSON.stringify({ error: { message: 'model-router: no tier succeeded', type: 'upstream_error' } }));
+
+  emitExhausted(res, failed, tried);
 }
 
 // ---------------------------------------------------------------------------
@@ -804,12 +822,7 @@ const server = http.createServer(async (req, res) => {
       service: 'model-router',
       pid: process.pid,
       tiers: tiers.map((t) => ({ name: t.name, model: t.model, supportsTools: t.supportsTools })),
-      judge: {
-        enabled: judgeConfigActive(),
-        tier: judgeTier().name,
-        threshold: Number(config.judge?.threshold ?? 0.6),
-      },
-      uptime: Math.round((Date.now() - stats.startedAt) / 1000),
+      uptime: Math.round((clock.now() - stats.startedAt) / 1000),
     }));
     return;
   }
@@ -866,12 +879,17 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const [host, portStr] = String(config.listen || '127.0.0.1:49700').split(':');
-const port = Number(portStr || 49700);
-server.listen(port, host, () => {
-  log(`listening on http://${host}:${port}`);
-  log(`ladder: ${tiers.map((t) => `${t.name}(${t.model})`).join(' -> ')}`);
-  for (const t of tiers) {
-    if (!keyFor(t)) log(`warning: tier "${t.name}" has no api key (env ${t.apiKeyEnv})`);
-  }
-});
+const isMain = process.argv[1] && path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+if (isMain) {
+  const [host, portStr] = String(config.listen || '127.0.0.1:49700').split(':');
+  const port = Number(portStr || 49700);
+  server.listen(port, host, () => {
+    log(`listening on http://${host}:${port}`);
+    log(`ladder: ${tiers.map((t) => `${t.name}(${t.model})`).join(' -> ')}`);
+    for (const t of tiers) {
+      if (!keyFor(t)) log(`warning: tier "${t.name}" has no api key (env ${t.apiKeyEnv})`);
+    }
+  });
+}
+
+export { route, chooseStart, buildPlan, evaluateDepth, sticky, clock, server };
