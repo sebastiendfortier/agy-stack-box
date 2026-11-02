@@ -11,9 +11,10 @@ Goal: Implement the deterministic router rewrite, complete approved hygiene edit
 - Removed the hard-coded site proxy default while retaining caller-provided proxy variables. Added an ignore rule for generated `.ssm` bundles.
 - CLI “models unavailable” diagnosis from the latest chat: Antigravity OAuth was not logged in. User action: run `./scripts/agy-cli` and complete the browser login.
 - Reviewed existing pre-Phase-2 edits and retained them; no push/publish.
+- Local commits: `e038f85`, `40eba51`, `8be0be8`, `6ef4a6e`.
 
 ## Checks
-- `npm test`: 24 passing tests.
+- `npm test`: 25 passing tests.
 - `node --check scripts/model-router.mjs`: passed.
 - `bash -n scripts/setup-config.sh scripts/common.sh ssm/validate_ssm_package.sh`: passed.
 - Router config template parsed as JSON after placeholder substitution.
