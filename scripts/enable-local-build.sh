@@ -83,5 +83,5 @@ echo "  - Daily run: AGY_NET_MODE=host (default) — never needs sudo; ports sta
 echo "  - AGY_NET_MODE=bridge: optional; often needs sudo/CNI on desktops; not for HPC without admin."
 echo
 echo "Next (laptop):"
-echo "  ./scripts/build-sif.sh && ./scripts/fetch-apps.sh && ./scripts/start-services.sh"
-echo "HPC: copy the .sif, skip this script, run fetch-apps + start-services (host net)."
+echo "  ./scripts/build-sif.sh && ./scripts/start-services.sh"
+echo "HPC: copy the .sif, skip this script, run start-services (host net)."

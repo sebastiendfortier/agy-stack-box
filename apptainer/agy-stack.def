@@ -8,7 +8,9 @@ From: rockylinux:9
 
 %help
     Apps live under /apps (not host-bound). Launchers under /opt/agy-stack/host-scripts.
-    Optional override: state/apps via AGY_STATE. Host: scripts/agy-ide | agy-cli | agy-app
+    Full image: IDE / App 2.0 / Obsidian / agy live under /apps in current builds.
+    Resolver retains /opt lookup for images built before the app path consolidation.
+    Host: setup-config then scripts/agy-ide | agy-cli | agy-app
 
 %files
     rootfs-scripts/openrouter-proxy.sh /opt/agy-stack/host-scripts/openrouter-proxy.sh

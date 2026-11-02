@@ -19,7 +19,7 @@ fi
 
 cd "$ROOT/apptainer"
 OUT="$ROOT/apptainer/agy-stack.sif"
-info "Building $OUT with $RT --fakeroot (IDE/App/Obsidian/agy baked under /opt)..."
+info "Building $OUT with $RT --fakeroot (IDE/App/Obsidian/agy baked under /apps)..."
 
 # HPC sites often export APPTAINER_BIND / SINGULARITY_BIND* (home, scratch, project).
 # Those break *builds* (wrong mounts inside %post / fakeroot) but are wanted at *run*

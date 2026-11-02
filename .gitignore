@@ -1,12 +1,12 @@
-# Local runtime / secrets (never commit)
+# Runtime state (never commit): secrets, app config, logs, sessions
 state/
+# Legacy downloaded app cache is unused; the parent state/ rule ignores it.
 *.sif
 *.sif.*
 *.img
 *.tar.gz
 *.AppImage
 apptainer/*.bak
-state/apps/
 secrets.env
 .env
 **/custom_models.json

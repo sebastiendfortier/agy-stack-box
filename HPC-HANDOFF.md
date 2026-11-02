@@ -4,8 +4,7 @@
 HPC after cloning this repo. MalSteam II / Android / ONN stay on the workstation —
 do not expect `adb` or `Documents/malsteam-ii` on the cluster.
 
-State: Phase 0 of `harness/CMC-Harness-Plan.md` closed. App 2.0 is wired into
-`fetch-apps.sh` / `agy-app`. CMC profile + frontmatter agents are seedable.
+State: Phase 0 of `harness/CMC-Harness-Plan.md` closed. App 2.0 and the other app binaries are baked into the SIF (`/apps` in current builds; older images use `/opt`). Launchers support both paths without per-user app downloads. CMC profile + frontmatter agents are seedable.
 
 ## 0. Before you leave the workstation (do once)
 
@@ -14,16 +13,16 @@ cd ~/src/agy-stack-box
 git status   # commit App 2.0 + seed changes if not pushed yet
 git push origin main
 
-# Pre-stage bulky apps + SIF for scp/rsync (login nodes often lack egress)
-ls -lh apptainer/agy-stack.sif state/apps/antigravity-app state/apps/antigravity-ide state/apps/agy state/apps/obsidian
+# Pre-stage the SIF for scp/rsync (login nodes often lack egress)
+ls -lh apptainer/agy-stack.sif
 ```
 
 Optional pack (run on workstation, then copy the tarball):
 
 ```bash
-tar -C ~/src/agy-stack-box -cvf /tmp/agy-stack-apps.tar \
-  apptainer/agy-stack.sif state/apps
-# scp /tmp/agy-stack-apps.tar <hpc>:
+tar -C ~/src/agy-stack-box -cvf /tmp/agy-stack-image.tar \
+  apptainer/agy-stack.sif
+# scp /tmp/agy-stack-image.tar <hpc>:
 ```
 
 ## 1. Clone on HPC
@@ -34,28 +33,23 @@ cd agy-stack-box
 ```
 
 Requires: `apptainer` or `singularity` (CE 3.11+), X11/Wayland or ThinLinc/VNC/`ssh -X`
-for GUI, `node`+`npx` for skills (or skip host wire), disk under `state/` (~2 GB with
-App 2.0), **no sudo**. Prefer a personal interactive node (loopback proxy is
+for GUI, `node`+`npx` for skills (or skip host wire), disk under `state/`, **no sudo**. Prefer a personal interactive node (loopback proxy is
 reachable by other users on a shared login node).
 
-## 2. Image + apps
+## 2. Complete image
 
 ```bash
-# SIF: copy prebuilt OR build
+# Copy prebuilt SIF OR build on-cluster
 # scp workstation:.../apptainer/agy-stack.sif apptainer/
 # OR: ./scripts/build-sif.sh
-
-# Apps: rsync/tar from workstation OR fetch if egress works
-# tar xf ~/agy-stack-apps.tar   # if you packed in step 0
-# OR: ./scripts/fetch-apps.sh   # IDE + App 2.0 + Obsidian + agy
 ```
 
-Confirm:
+Confirm baked app binaries resolve inside the SIF. Resolver prefers `/apps` and supports the existing `/opt` image:
 
 ```bash
-test -x state/apps/antigravity-app/Antigravity-x64/antigravity && echo APP_OK
-test -x "state/apps/antigravity-ide/Antigravity IDE/antigravity-ide" && echo IDE_OK
-test -x state/apps/agy/agy && echo AGY_OK
+singularity exec apptainer/agy-stack.sif agy-resolve-app app
+singularity exec apptainer/agy-stack.sif agy-resolve-app ide
+singularity exec apptainer/agy-stack.sif agy-resolve-app agy
 ```
 
 ## 3. Configure (CMC-safe)
@@ -114,8 +108,8 @@ ls "$VAULT_HOST_PATH/setup" "$VAULT_HOST_PATH/agent-sessions"
 ## Known gaps
 
 1. Predictable loopback proxy ports on shared nodes — prefer personal node.
-2. `fetch-apps.sh` has no checksum pins yet.
-3. Host `/usr` overlay needs host Node for the BYOK proxy.
+2. Runtime smoke test is blocked: Singularity lacks a setuid installation, including under `--fakeroot`; staging now uses `~/ss/tmp` to avoid `/tmp` capacity limits.
+3. Host `/usr` overlay hides the SIF's `/usr/local` Node; the launcher uses the staged Node 22 tree until a new `/apps` image is validated.
 4. `WIRE_HOST=1` overwrites host `GEMINI.md` — use `WIRE_HOST=0` on HPC.
 5. Local Qwen scaffolded via `QWEN_BASE_URL` / `QWEN_MODEL`.
 

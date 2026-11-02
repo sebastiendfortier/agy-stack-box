@@ -5,26 +5,30 @@ STATE="${AGY_STATE:-/agy-state}"
 DATA="$STATE/gemini/antigravity"
 PORT="${PROXY_PORT:-50999}"
 mkdir -p "$DATA"
-# Prefer /apps/node (survives host /usr overlay). Host Node 12 breaks optional chaining.
-NODE="${NODE_BIN:-}"
-if [[ -z "$NODE" || ! -x "$NODE" ]]; then
-  for cand in \
-    /apps/node/bin/node \
-    /opt/agy-stack/node/bin/node \
-    /usr/local/bin/node; do
-    if [[ -x "$cand" ]]; then NODE="$cand"; break; fi
-  done
-fi
-if [[ -z "$NODE" || ! -x "$NODE" ]]; then
-  NODE="$(command -v node 2>/dev/null || true)"
-fi
-if [[ -z "$NODE" || ! -x "$NODE" ]]; then
-  echo "error: node not found (expected /apps/node/bin/node in the SIF)" >&2
-  exit 1
-fi
-_major="$("$NODE" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
-if [[ "${_major}" -lt 18 ]]; then
-  echo "error: node $("$NODE" -v 2>/dev/null) at $NODE is too old; need >=18 under /apps/node" >&2
+# This SIF's Node 22 is at /usr/local/bin, which the host /usr overlay hides.
+# Rebuilt images put it at /apps/node. state/opt-node is that same tree, already
+# bind-mounted with AGY_STATE. Never fall through to host /bin/node (v12).
+NODE=""
+_seen=""
+for cand in \
+  "${NODE_BIN:-}" \
+  /apps/node/bin/node \
+  /usr/local/bin/node \
+  "$STATE/opt-node/bin/node"
+do
+  [[ -n "$cand" && -x "$cand" ]] || continue
+  case ":${_seen}:" in
+    *":${cand}:"*) continue ;;
+  esac
+  _seen="${_seen:+${_seen}:}${cand}"
+  _major="$("$cand" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)"
+  if [[ "${_major}" -ge 18 ]]; then
+    NODE="$cand"
+    break
+  fi
+done
+if [[ -z "$NODE" ]]; then
+  echo "error: no Node >= 18 (tried NODE_BIN, /apps/node, /usr/local, $STATE/opt-node). Host /usr overlay hides the SIF copy; host /bin/node is too old." >&2
   exit 1
 fi
 exec "$NODE" /opt/antigravity-add-model/scripts/desktop-service.mjs run \

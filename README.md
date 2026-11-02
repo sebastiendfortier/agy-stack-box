@@ -1,9 +1,9 @@
 # agy-stack-box
 
-A Singularity / Apptainer image with apps baked under `/opt`:
+A Singularity / Apptainer image with apps baked under `/apps`:
 
 - **In the SIF:** OpenRouter BYOK proxy + Node + Electron libs + Antigravity IDE, App 2.0, Obsidian AppImage, `agy` CLI
-- **Optional override:** `./scripts/fetch-apps.sh` → `state/apps/` (preferred by `agy-resolve-app` when present)
+- Apps resolve from the SIF (`/apps` in current builds; `/opt` in older images); no per-user app fetch path.
 
 Proxy and Obsidian REST bind loopback only. Default networking is **host net** (`AGY_NET_MODE=host`) — **no sudo**. Ports and instance name default **per-uid** so multiple users on one node do not collide.
 
@@ -27,7 +27,6 @@ Skip `enable-local-build.sh` and bridge mode. Prefer building the SIF on a lapto
 
 ```bash
 ./scripts/setup-config.sh     # creates a fresh local vault from harness/ if VAULT_HOST_PATH is new
-./scripts/fetch-apps.sh
 ./scripts/fetch-skills.sh     # ponytail + caveman into state/ (+ host Cursor/agy when WIRE_HOST=1)
 ./scripts/seed-cmc-profile.sh # CMC modes + profile; prefers vault, falls back to harness/
 ./scripts/start-services.sh   # AGY_NET_MODE=host by default — no sudo (or just run agy-ide)
@@ -53,7 +52,6 @@ Ubuntu 24.04+ sets `kernel.apparmor_restrict_unprivileged_userns=1`, which break
 #   OBSIDIAN_API_KEY=...
 #   VAULT_HOST_PATH=/path/to/vault
 ./scripts/setup-config.sh          # render custom_models + MCP + IDE settings
-./scripts/fetch-apps.sh            # download IDE + Obsidian + agy into state/apps (~0.5GB+)
 ./scripts/fetch-skills.sh          # ponytail + caveman for CLI/IDE (and host Cursor if present)
 ./scripts/seed-cmc-profile.sh      # CMC profile/modes; vault first, then harness/
 ```
@@ -80,17 +78,19 @@ Source order: vault (`$VAULT_HOST_PATH`) first, then `harness/`. Overrides: `CMC
 
 Redact hostnames, queues, absolute HPC paths, and secrets before committing changes under `harness/` — this repo may be public.
 
-### 2. Get the slim image
+### 2. Build or get the complete image
+
+The SIF includes IDE, App 2.0, Obsidian, and the `agy` CLI. No per-user app fetch step is needed.
 
 Laptop (with fakeroot enabled once):
 
 ```bash
-./scripts/build-sif.sh            # does NOT embed IDE/Obsidian/agy
+./scripts/build-sif.sh
 ```
 
 HPC: copy a prebuilt `apptainer/agy-stack.sif`, or build on-cluster with `build-sif.sh` (clears bind env for build only).
 
-Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App URLs are in `scripts/fetch-apps.sh`.
+Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App versions and source URLs are pinned in `apptainer/agy-stack.def`.
 
 ### 3. Run
 
@@ -131,12 +131,12 @@ in `state/router/config.json` to disable the fallback.
 ## Layout
 
 ```text
-apptainer/agy-stack.def          # image definition
-apptainer/rootfs-scripts/        # in-image wrappers (agy, ide, proxy, obsidian)
+apptainer/agy-stack.def          # image definition; apps baked under /apps
+apptainer/rootfs-scripts/        # in-image wrappers (agy, IDE, proxy, Obsidian)
 scripts/                         # host orchestration (incl. fetch-skills.sh)
 harness/                         # tracked CMC plan/profile/glossary/agent-sessions seed
 config/templates/                # secret-free templates
-state/                           # local only (gitignored): apps, gemini, secrets
+state/                           # local only (gitignored): gemini config, secrets, runtime data
 ```
 
 ## Networking model
@@ -151,7 +151,7 @@ This is a **Singularity/Apptainer instance** (full Linux rootfs for the stack), 
 | **Your files** | Real `$HOME` + vault binds; add scratch/projects via `AGY_EXTRA_BINDS` |
 | **OS tools** | Host `/usr` `/bin` `/lib*` overlaid by default (`AGY_HOST_OS_TOOLS=1`) |
 | **HPC modules / PATH** | Login `PATH`, `LD_LIBRARY_PATH`, `MODULEPATH`, … are passed in; those directories (and common roots like `/cvmfs`, `/scratch`) are bind-mounted (`AGY_HOST_PATH_BINDS=1`) so `module load` tools work in IDE terminals and `agy` |
-| **Stack apps** | IDE / Obsidian / `agy` / OpenRouter proxy from `state/apps` + SIF `/opt` |
+| **Stack apps** | IDE / Obsidian / `agy` / OpenRouter proxy baked into the SIF under `/apps` |
 
 Site `APPTAINER_BIND` / `SINGULARITY_BIND*` still apply at **run**; `build-sif.sh` unsets them only while **building**.
 

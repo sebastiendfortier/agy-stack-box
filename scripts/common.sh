@@ -241,7 +241,7 @@ host_path_binds() {
   local p d root
   local -a cand=()
   # Explicit software roots often used on HPC.
-  # Do NOT include /apps — that prefix is owned by the SIF (node + IDE/App/agy/Obsidian).
+  # Do NOT include /apps — that prefix is owned by the SIF (Node + apps).
   for d in /cvmfs /opt/software /opt/ohpc /opt/apps /soft /software /appl \
            /sw /gpfs /lustre /project /projects /scratch /work /data; do
     [[ -d "$d" ]] && cand+=("$d")
@@ -304,12 +304,6 @@ script_binds() {
   prepare_stack_bin
   # host-scripts exists in the SIF; directory bind replaces it with our named launchers.
   printf '%s\n' "$STATE_DIR/stack-bin:/opt/agy-stack/host-scripts"
-  # Node under /apps survives host /usr overlay; optional state tree until next SIF bake.
-  if [[ -x "$STATE_DIR/apps/node/bin/node" ]]; then
-    printf '%s\n' "$STATE_DIR/apps/node:/apps/node"
-  elif [[ -x "$STATE_DIR/opt-node/bin/node" ]]; then
-    printf '%s\n' "$STATE_DIR/opt-node:/apps/node"
-  fi
 }
 
 # Stack-managed config layered onto the real home (HOME stays the real home for pickers).
@@ -385,9 +379,16 @@ instance_runtime_env() {
     envargs+=(--env "IHUB_API_KEY=${IHUB_API_KEY}")
   fi
   envargs+=(--env "OBSIDIAN_API_KEY=${OBSIDIAN_API_KEY}")
-  # Stack launchers + /apps/node first, then login PATH (modules, conda, …).
-  # /apps is SIF-owned (not host-bound); host /usr Node 12 must not win.
-  envargs+=(--env "PATH=/opt/agy-stack/host-scripts:/apps/node/bin:${PATH:-/usr/bin:/bin}")
+  # Stack launchers + Node >= 18, then login PATH (modules, conda, …).
+  # New images: /apps/node. This image: /usr/local/bin/node, hidden by the host
+  # /usr overlay, with the same Node 22 tree at $STATE_IN_CONTAINER/opt-node.
+  # That directory is ahead of host PATH so `command -v node` cannot pick /bin/node v12.
+  local node_path="/opt/agy-stack/host-scripts:/apps/node/bin"
+  if [[ -x "$STATE_DIR/opt-node/bin/node" ]]; then
+    node_path+=":${STATE_IN_CONTAINER}/opt-node/bin"
+  fi
+  node_path+=":/usr/local/bin:${PATH:-/usr/bin:/bin}"
+  envargs+=(--env "PATH=${node_path}")
   envargs+=(--env "NODE_BIN=/apps/node/bin/node")
   for v in \
     LD_LIBRARY_PATH LIBRARY_PATH MODULEPATH LOADEDMODULES \
@@ -480,7 +481,7 @@ clients_still_active() {
     pgrep -f "antigravity-ide|/Antigravity IDE/antigravity-ide" >/dev/null 2>&1 && exit 0
     pgrep -f "Antigravity-x64/antigravity" >/dev/null 2>&1 && exit 0
     # agy CLI binary (not openrouter-proxy / wrappers named agy-*)
-    pgrep -f "/apps/agy/bin/agy|/opt/agy/bin/agy|/.local/bin/agy" >/dev/null 2>&1 && exit 0
+    pgrep -f "/apps/agy/bin/agy|/opt/agy/bin/agy" >/dev/null 2>&1 && exit 0
     exit 1
   ' 2>/dev/null
 }
@@ -547,7 +548,7 @@ stop_services() {
           rm -f \"\$f\"
         fi
       done
-      pkill -f \"/opt/obsidian/Obsidian|/apps/obsidian/Obsidian\" 2>/dev/null || true
+      pkill -f \"/apps/obsidian/Obsidian|/opt/obsidian/Obsidian\" 2>/dev/null || true
       pkill -f \"desktop-service.mjs\" 2>/dev/null || true
       pkill -f \"model-router.mjs\" 2>/dev/null || true
       true
@@ -579,7 +580,7 @@ ensure_services() {
   sync_gemini_to_home
   mkdir -p "$HOST_RUNTIME_DIR/pids" "$HOST_SESSIONS_DIR" "$STATE_DIR/logs"
 
-  # Apps + Node are under /apps in the SIF (optional state/apps override). /apps is never host-bound.
+  # Apps + Node are baked into the SIF under /apps, which is never host-bound.
 
   # AGY_NET_MODE=host (default): share host netns; proxy/Obsidian still bind 127.0.0.1
   #   (LAN-safe, no sudo, OpenRouter egress works).
@@ -661,7 +662,7 @@ ensure_services() {
       info "Starting model router on 127.0.0.1:${ROUTER_PORT}..."
       : >"$STATE_DIR/logs/router.log"
       exec_in_instance "$RT" "$INSTANCE_NAME" \
-        "${_sh[@]}" "mkdir -p \"${_cpids}\" \"\$AGY_STATE/logs\"; nohup env AGY_STATE=\"\$AGY_STATE\" ROUTER_PORT=\"\$ROUTER_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" NODE_BIN=\"\${NODE_BIN:-/apps/node/bin/node}\" \"\${NODE_BIN:-/apps/node/bin/node}\" \"\$AGY_STATE/router/model-router.mjs\" --config \"\$AGY_STATE/router/config.json\" >>\"\$AGY_STATE/logs/router.log\" 2>&1 & echo \$! >\"${_cpids}/router.pid\""
+        "${_sh[@]}" "mkdir -p \"${_cpids}\" \"\$AGY_STATE/logs\"; NODE_BIN=; for cand in /apps/node/bin/node \"\$AGY_STATE/opt-node/bin/node\" /usr/local/bin/node; do [[ -x \"\$cand\" ]] || continue; maj=\$(\"\$cand\" -p \"process.versions.node.split('.')[0]\" 2>/dev/null || echo 0); [[ \"\$maj\" -ge 18 ]] && NODE_BIN=\"\$cand\" && break; done; [[ -n \"\$NODE_BIN\" ]] || { echo \"error: no Node >= 18 for model router\" >>\"\$AGY_STATE/logs/router.log\"; exit 1; }; nohup env AGY_STATE=\"\$AGY_STATE\" ROUTER_PORT=\"\$ROUTER_PORT\" OPENROUTER_API_KEY=\"\$OPENROUTER_API_KEY\" NODE_BIN=\"\$NODE_BIN\" \"\$NODE_BIN\" \"\$AGY_STATE/router/model-router.mjs\" --config \"\$AGY_STATE/router/config.json\" >>\"\$AGY_STATE/logs/router.log\" 2>&1 & echo \$! >\"${_cpids}/router.pid\""
       for _ in $(seq 1 30); do
         if exec_in_instance "$RT" "$INSTANCE_NAME" \
           "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${ROUTER_PORT}/healthz >/dev/null 2>&1"; then
