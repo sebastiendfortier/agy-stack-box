@@ -167,7 +167,8 @@ os.chmod(dest, 0o600)
 print(dest)
 PY
 
-render_template "$ROOT/config/templates/mcp_config.json.tmpl" \
+python3 "$ROOT/scripts/render-mcp-config.py" \
+  "$ROOT/config/templates/mcp_config.json.tmpl" \
   "$STATE_DIR/gemini/antigravity/mcp_config.json"
 # CLI/global MCP location used by some agy builds
 mkdir -p "$STATE_DIR/gemini/config"
