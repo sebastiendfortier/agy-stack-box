@@ -68,13 +68,13 @@ With `WIRE_HOST=1` (default) it also wires the **host** account:
 
 - **Cursor:** always-on user rules (`~/.cursor/rules/ponytail.mdc`, `caveman-ultracave.mdc`) at **ultra** / **ultracave** — no `/ponytail` or `/caveman` needed
 - **agy CLI:** plugins + always-on plugin rules (same modes)
-- **Antigravity IDE:** skills + `AGENTS.md` / `GEMINI.md.d` always-on text
+- **Antigravity IDE:** skills + `config/rules/` always-on rules
 
 Set `WIRE_HOST=0` to only refresh `state/`. Defaults live in `~/.config/ponytail/config.json` and `~/.config/caveman/config.json`.
 
 ### CMC harness (vault optional)
 
-`harness/` holds tracked copies of the CMC plan, questionnaire (`status: partial`), profile, glossary stub, and `agent-sessions/` template. `seed-cmc-profile.sh` writes the always-on `GEMINI.md.d/cmc-profile.md`, the `cmc-profile` skill, the Architect/Code/Ops/Science/Docs agents, and references for the glossary + plan.
+`harness/` holds tracked copies of the CMC plan, questionnaire (`status: partial`), profile, glossary stub, and `agent-sessions/` template. `seed-cmc-profile.sh` writes the always-on rule `config/rules/cmc-profile.md`, the `cmc-profile` skill, the Architect/Code/Ops/Science/Docs agents, and references for the glossary + plan.
 
 Source order: vault (`$VAULT_HOST_PATH`) first, then `harness/`. Overrides: `CMC_VAULT_ROOT`, `CMC_PROFILE_SRC`, `CMC_GLOSSARY_SRC`, `CMC_SEED_DIR`. `init-vault.sh` bootstraps a local vault from `harness/` (called by `setup-config.sh`), so an HPC clone never depends on the workstation vault.
 
@@ -109,6 +109,24 @@ OpenRouter entries in the native picker / `agy models`:
 - `OpenRouter Auto` (`custom-openrouter-auto`)
 - `OpenRouter Gemini 2.5 Pro`
 - `OpenRouter Claude Sonnet 4.5`
+
+### When the paid rung is unavailable
+
+`Auto (SG Qwen → OpenRouter)` (`custom-auto-ladder`) degrades instead of going blank:
+
+| Situation | Result |
+|---|---|
+| Free tier answers | Answer, no OpenRouter spend |
+| Hard task, OpenRouter reachable | Escalated answer |
+| OpenRouter out of credits / key missing / down | Free tier's answer, `x-router-degraded` header, logged |
+| Both tiers fail | HTTP 502 telling you to switch to a Google model (free with your Antigravity account) |
+| No model credentials at all | HTTP 503 naming the missing variable |
+
+The router cannot call Google's built-in models itself — they authenticate with the
+Antigravity account, not an API key — so that last case is a message, not a reroute.
+A failed escalation no longer marks the conversation sticky, so one dead OpenRouter
+call cannot blank out the next five minutes of replies. Set `policy.fallbackDown: false`
+in `state/router/config.json` to disable the fallback.
 
 ## Layout
 

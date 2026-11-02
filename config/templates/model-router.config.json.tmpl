@@ -6,8 +6,8 @@
     "maxHoldMs": 1500,
     "escalationTtlMs": 300000,
     "largePromptTokens": 60000,
-    "maxToolsForSmall": 12,
     "repetitionMinRepeats": 3,
+    "fallbackDown": true,
     "refusalPatterns": [
       "\\bI can'(?:t| not)\\b",
       "\\bI cannot\\b",
@@ -15,18 +15,7 @@
       "\\bI'm unable\\b",
       "\\bI do(?:n't| not) have (?:access|the ability)\\b",
       "\\bas an AI\\b"
-    ],
-    "actionIntentPatterns": [
-      "\\b(edit|write|create|delete|remove|rename|move|fix|patch|update|implement|add|refactor)\\b",
-      "\\b(run|execute|install|build|compile|test|lint|deploy)\\b",
-      "\\b(read|open|inspect|search|grep|find|list)\\b"
     ]
-  },
-  "judge": {
-    "enabled": true,
-    "tier": "sg-qwen",
-    "threshold": 0.6,
-    "maxTokens": 2048
   },
   "tiers": [
     {

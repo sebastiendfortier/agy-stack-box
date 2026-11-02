@@ -5,7 +5,7 @@ HPC after cloning this repo. MalSteam II / Android / ONN stay on the workstation
 do not expect `adb` or `Documents/malsteam-ii` on the cluster.
 
 State: Phase 0 of `harness/CMC-Harness-Plan.md` closed. App 2.0 is wired into
-`fetch-apps.sh` / `start-app.sh`. CMC profile + frontmatter agents are seedable.
+`fetch-apps.sh` / `agy-app`. CMC profile + frontmatter agents are seedable.
 
 ## 0. Before you leave the workstation (do once)
 
@@ -85,11 +85,10 @@ ls state/gemini/config/agents   # architect code ops science docs (YAML frontmat
 ## 5. Run on HPC
 
 ```bash
-./scripts/start-services.sh        # instance + proxy + Obsidian
-./scripts/start-app.sh             # App 2.0 — multi-agent / plans
-./scripts/start-ide.sh             # IDE — edit code
-./scripts/start-cli.sh             # agy TUI
-./scripts/stop.sh
+./scripts/agy-app                  # ensures services, then App 2.0 — multi-agent / plans
+./scripts/agy-ide                  # IDE — edit code
+./scripts/agy-cli                  # agy TUI
+./scripts/agy-stop
 ```
 
 First App/IDE project on HPC should be **this repo** or a CMC worktree under

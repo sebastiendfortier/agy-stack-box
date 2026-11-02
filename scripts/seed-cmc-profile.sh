@@ -22,14 +22,17 @@ PLAN_SRC="$VAULT_ROOT/setup/CMC-Harness-Plan.md"
 [[ -f "$PLAN_SRC" ]] || PLAN_SRC="$SEED_DIR/CMC-Harness-Plan.md"
 
 mkdir -p \
-  "$STATE_DIR/gemini/GEMINI.md.d" \
-  "$STATE_DIR/gemini/antigravity/skills/cmc-profile" \
+  "$STATE_DIR/gemini/config/rules" \
   "$STATE_DIR/gemini/config/skills/cmc-profile" \
-  "$STATE_DIR/gemini/config/agents" \
-  "$STATE_DIR/gemini/antigravity/agents"
+  "$STATE_DIR/gemini/config/agents"
 
-# --- Always-on rules (does not replace ponytail AGENTS.md) ---
-cat >"$STATE_DIR/gemini/GEMINI.md.d/cmc-profile.md" <<'EOF'
+# --- Always-on rule (does not replace ponytail AGENTS.md) ---
+# `trigger: always_on` is what the CLI/App actually loads. A bare
+# GEMINI.md.d/ drop-in is not read by any surface, so don't emit one.
+cat >"$STATE_DIR/gemini/config/rules/cmc-profile.md" <<'EOF'
+---
+trigger: always_on
+---
 # CMC / ECCC profile (always on)
 
 Clean, human-readable code — colleagues may not use AI. Prefer first-try deploys: check env, paths, quotas, scheduler policy before claiming done.
@@ -59,13 +62,12 @@ EOF
 
 # --- Full profile copy (reference) ---
 if [[ -f "$PROFILE_SRC/AGENTS.md" ]]; then
-  cp -a "$PROFILE_SRC/AGENTS.md" "$STATE_DIR/gemini/antigravity/skills/cmc-profile/AGENTS.md"
   cp -a "$PROFILE_SRC/AGENTS.md" "$STATE_DIR/gemini/config/skills/cmc-profile/AGENTS.md"
 else
   info "warning: no CMC profile AGENTS.md in $VAULT_CMC or $SEED_DIR/cmc-profile"
 fi
 
-cat >"$STATE_DIR/gemini/antigravity/skills/cmc-profile/SKILL.md" <<'EOF'
+cat >"$STATE_DIR/gemini/config/skills/cmc-profile/SKILL.md" <<'EOF'
 ---
 name: cmc-profile
 description: CMC/ECCC Dev harness — safety, modes (Architect/Code/Ops/Science/Docs), bilingual, HPC-aware. Use for government/CMC work, MarimoHub/k3s/PBS/pixi, MSC data, or when redacting infra.
@@ -73,7 +75,7 @@ description: CMC/ECCC Dev harness — safety, modes (Architect/Code/Ops/Science/
 
 # CMC profile skill
 
-Follow `AGENTS.md` in this skill folder and always-on `GEMINI.md.d/cmc-profile.md`.
+Follow `AGENTS.md` in this skill folder and the always-on rule `config/rules/cmc-profile.md`.
 
 ## Quick checks before deploy claims
 1. Env manager (pixi/conda) + sitestore quota
@@ -85,8 +87,6 @@ Follow `AGENTS.md` in this skill folder and always-on `GEMINI.md.d/cmc-profile.m
 ## Redaction
 Replace real hosts, queues, and absolute HPC paths with placeholders in any text that may leave the machine.
 EOF
-cp -a "$STATE_DIR/gemini/antigravity/skills/cmc-profile/SKILL.md" \
-  "$STATE_DIR/gemini/config/skills/cmc-profile/SKILL.md"
 
 # --- Named mode agents (YAML frontmatter required for invoke_subagent) ---
 AGENTS_SRC="${CMC_AGENTS_SRC:-}"
@@ -102,19 +102,18 @@ if [[ -n "${AGENTS_SRC:-}" && -d "$AGENTS_SRC" ]]; then
   for f in "$AGENTS_SRC"/*.md; do
     [[ -f "$f" ]] || continue
     cp -a "$f" "$STATE_DIR/gemini/config/agents/$(basename "$f")"
-    cp -a "$f" "$STATE_DIR/gemini/antigravity/agents/$(basename "$f")"
   done
 else
   info "No agents dir at vault/harness — keeping existing state agents if any"
 fi
 
 # --- Glossary + plan pointers ---
-mkdir -p "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs"
+mkdir -p "$STATE_DIR/gemini/config/skills/cmc-profile/refs"
 if [[ -d "$GLOSSARY_SRC" ]]; then
-  cp -a "$GLOSSARY_SRC/." "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs/" 2>/dev/null || true
+  cp -a "$GLOSSARY_SRC/." "$STATE_DIR/gemini/config/skills/cmc-profile/refs/" 2>/dev/null || true
 fi
 if [[ -f "$PLAN_SRC" ]]; then
-  cp -a "$PLAN_SRC" "$STATE_DIR/gemini/antigravity/skills/cmc-profile/refs/CMC-Harness-Plan.md"
+  cp -a "$PLAN_SRC" "$STATE_DIR/gemini/config/skills/cmc-profile/refs/CMC-Harness-Plan.md"
 fi
 
 # --- Vault: reuse an existing one, or bootstrap a local vault on a fresh HPC clone ---
@@ -131,29 +130,25 @@ if [[ -f "$GEMINI_STATE" ]] && ! grep -q 'CMC / ECCC' "$GEMINI_STATE" 2>/dev/nul
   cat >>"$GEMINI_STATE" <<'EOF'
 
 ## CMC / ECCC
-Always-on rules live in `GEMINI.md.d/cmc-profile.md`. Invoke skill `cmc-profile` or modes Architect/Code/Ops/Science/Docs for CMC work. Prefer vault paths under CodeVault for lasting notes.
+Always-on rules live in `config/rules/cmc-profile.md`. Invoke skill `cmc-profile` or modes Architect/Code/Ops/Science/Docs for CMC work. Prefer vault paths under CodeVault for lasting notes.
 EOF
 fi
 
 if [[ "$WIRE_HOST" == "1" && -d "$HOME/.gemini" ]]; then
   info "Mirroring CMC profile into host ~/.gemini"
-  mkdir -p "$HOME/.gemini/GEMINI.md.d" \
-    "$HOME/.gemini/antigravity/skills/cmc-profile" \
+  mkdir -p "$HOME/.gemini/config/rules" \
     "$HOME/.gemini/config/skills/cmc-profile" \
-    "$HOME/.gemini/config/agents" \
-    "$HOME/.gemini/antigravity/agents"
-  cp -a "$STATE_DIR/gemini/GEMINI.md.d/cmc-profile.md" "$HOME/.gemini/GEMINI.md.d/"
-  cp -a "$STATE_DIR/gemini/antigravity/skills/cmc-profile/." "$HOME/.gemini/antigravity/skills/cmc-profile/"
+    "$HOME/.gemini/config/agents"
+  cp -a "$STATE_DIR/gemini/config/rules/." "$HOME/.gemini/config/rules/"
   cp -a "$STATE_DIR/gemini/config/skills/cmc-profile/." "$HOME/.gemini/config/skills/cmc-profile/"
   cp -a "$STATE_DIR/gemini/config/agents/." "$HOME/.gemini/config/agents/"
-  cp -a "$STATE_DIR/gemini/antigravity/agents/." "$HOME/.gemini/antigravity/agents/"
   if [[ -f "$GEMINI_STATE" ]]; then
     cp -a "$GEMINI_STATE" "$HOME/.gemini/GEMINI.md"
   fi
 fi
 
 info "CMC profile seeded:"
-info "  $STATE_DIR/gemini/GEMINI.md.d/cmc-profile.md"
+info "  $STATE_DIR/gemini/config/rules/cmc-profile.md"
 info "  skills/cmc-profile + agents: architect code ops science docs"
 info "  profile source: $PROFILE_SRC"
 info "  glossary source: $GLOSSARY_SRC"

@@ -123,7 +123,7 @@ Network:
 ### Phase 0 — this week (laptop / current box)
 1. Mark questionnaire `status: partial` (honest). ✅
 2. Seed CMC profile under vault + agy-stack sync paths: ✅
-   - `scripts/seed-cmc-profile.sh` → `state/gemini/GEMINI.md.d/cmc-profile.md`
+   - `scripts/seed-cmc-profile.sh` → `state/gemini/config/rules/cmc-profile.md`
    - skill `cmc-profile` + agents Architect / Code / Ops / Science / Docs
    - glossary starter + `agent-sessions/`
 3. Antigravity IDE started on `~/src/agy-stack-box` (proxy `:33000`). ✅
