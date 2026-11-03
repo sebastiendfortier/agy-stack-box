@@ -194,6 +194,18 @@ The stack bind-mounts the vault at `/vault` **and** at the same host path inside
 
 MCP is rendered to `state/gemini/antigravity/mcp_config.json` as `http://127.0.0.1:${OBSIDIAN_REST_PORT}/mcp/`.
 
+## Troubleshooting
+
+**App died with no trace.** The app can vanish with no log line, no Crashpad dump, and no core. Run it under the supervisor so the next occurrence is diagnosable:
+
+```bash
+tmux new -s agy 'scripts/agy-app-watch.sh'
+```
+
+It logs each launch and how the app left (`$HOME/agy-app-exits.log`): `exit=137 signal=9 (KILL)` = OOM, `exit=139 signal=11 (SEGV)` = crash, `exit=135 signal=7 (BUS)` = bad memory mapping — on this cluster usually a transient NFS event on the shared home, in which case a restart is all that is needed. A clean quit (`exit=0`) stops the supervisor.
+
+**Image in doubt before trusting it:** `./scripts/sif-smoke-test.sh` (read-only; run from a host shell for the full probe).
+
 ## License / third party
 
 - Google Antigravity IDE & CLI: Google’s terms
