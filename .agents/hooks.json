@@ -1,0 +1,27 @@
+{
+  "hpc-shell-wrap": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "../scripts/hook-hpc-shell-wrap.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "gate-stop": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "../scripts/gate-check-on-stop.sh",
+        "timeout": 120
+      }
+    ]
+  }
+}
