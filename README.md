@@ -109,7 +109,9 @@ Verify an image before trusting it (read-only, safe while the app runs):
 ./scripts/agy-stop                 # or stop.sh (wrapper)
 ```
 
-Headless nodes (SSH login/ppp, no X11/Wayland): `ensure_services` skips the Obsidian GUI automatically — the vault stays bind-mounted and the CLI/proxy/router are unaffected (`AGY_FORCE_OBSIDIAN=1` overrides). IDE/App still need a display; run them on vis/ThinLinc.
+Headless nodes (SSH login/ppp, no X11/Wayland): `ensure_services` skips the Obsidian GUI automatically — the vault stays bind-mounted and the CLI/proxy/router are unaffected (`AGY_FORCE_OBSIDIAN=1` overrides).
+
+Host gate: `agy-app` and `agy-ide` only start on `hpcr<N>-vis<M>` hosts (they need a display + GPU); anywhere else they exit with a pointer to `agy-cli`. `agy-cli` is not gated and works on any host. `AGY_FORCE_GUI_HOST=1` overrides the check (testing only).
 
 OpenRouter entries in the native picker / `agy models`:
 

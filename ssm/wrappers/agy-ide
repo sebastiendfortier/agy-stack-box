@@ -7,6 +7,7 @@ export SIF_PATH="${SIF_PATH:-${_PKG_ROOT}/share/container/agy-stack-box.sif}"
 # shellcheck source=../share/lib/common.sh
 source "${_PKG_ROOT}/share/lib/common.sh"
 
+require_vis_host
 load_secrets
 ensure_services
 RT="$(resolve_runtime)"

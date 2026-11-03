@@ -39,6 +39,24 @@ die() { echo "error: $*" >&2; exit 1; }
 info() { echo "$*"; }
 warn() { echo "warning: $*" >&2; }
 
+# GUI gate: the app/IDE need an X display + GPU, which only the hpcr-vis nodes
+# have. Refuse early (before any instance work) on other hosts so users get a
+# clear pointer to agy-cli instead of a dead GUI. Hosts follow hpcr<N>-vis<M>;
+# the pattern is checked against the short hostname.
+require_vis_host() {
+  local h
+  h="$(hostname -s 2>/dev/null || true)"
+  if [[ "${AGY_FORCE_GUI_HOST:-0}" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$h" =~ hpcr[0-9]+-vis[0-9]+ ]]; then
+    return 0
+  fi
+  die "GUI apps (agy-app/agy-ide) run on hpcr-vis hosts only — this host is '$h'.
+  Use 'agy-cli' here, or SSH to an hpcr-vis node for the app/IDE.
+  (override for testing: AGY_FORCE_GUI_HOST=1)"
+}
+
 # Site SINGULARITY_BINDPATH often includes /home,/fs — a full /home bind can shadow nested
 # ~/.gemini overlays. Drop bare /home (and duplicates) for stack instance/exec; --home covers it.
 sanitize_site_bindpath() {
