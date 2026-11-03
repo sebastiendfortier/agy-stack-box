@@ -92,6 +92,13 @@ HPC: copy a prebuilt `apptainer/agy-stack.sif`, or build on-cluster with `build-
 
 Pinned BYOK proxy: `antigravity-add-model` @ `f793635`. App versions and source URLs are pinned in `apptainer/agy-stack.def`.
 
+Verify an image before trusting it (read-only, safe while the app runs):
+
+```bash
+./scripts/sif-smoke-test.sh            # structural checks + runtime exec probe
+```
+
+
 ### 3. Run
 
 ```bash
