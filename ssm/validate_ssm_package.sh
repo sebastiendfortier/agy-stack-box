@@ -52,11 +52,12 @@ leak() {
   grep -rInE "${path_pattern}|hpcr[0-9]|${cluster_pattern}|${site_pattern}|${key_pattern}|IHUB_API_KEY=sk-" "$@"
 }
 # Scan committed sources (ssm/ minus this validator, which contains the pattern
-# itself) plus the packaged bin/ and etc/ trees.
+# itself) plus the packaged bin/, etc/ and .ssm.d/ trees (control.json has
+# previously carried the real build host + user).
 scan_src=$(find "$DIR" -name validate_ssm_package.sh -prune -o -type f -print)
-if leak $scan_src "$PKGDIR/bin" "$PKGDIR/etc" >/dev/null 2>&1; then
+if leak $scan_src "$PKGDIR/bin" "$PKGDIR/etc" "$PKGDIR/.ssm.d" >/dev/null 2>&1; then
   echo "FAIL  redaction (leaks found)"; FAIL=$((FAIL+1))
-  leak "$DIR" "$PKGDIR/bin" "$PKGDIR/etc" | head -5
+  leak "$DIR" "$PKGDIR/bin" "$PKGDIR/etc" "$PKGDIR/.ssm.d" | head -5
 else
   echo "PASS  redaction"; PASS=$((PASS+1))
 fi

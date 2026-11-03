@@ -85,15 +85,19 @@ chmod 755 "${OUT}/${PKGNAME}/etc/profile.d/${PKGNAME}.sh"
 
 # --- control.json (python3; schema matches sibling packages) -----------------
 python3 - "$OUT/$PKGNAME" "$VERSION" <<'PY'
-import json, os, socket, sys, getpass
+import json, os, sys
 from datetime import datetime, timezone
 pkg, version = sys.argv[1], sys.argv[2]
+# x-build-host/user are intentionally NOT the real values: the package is
+# published to a shared SSM domain, and a cluster node name + login name in
+# control.json would fingerprint the build environment (same rule as the
+# redaction gate in validate_ssm_package.sh).
 control = {
     "name": "agy-stack-box", "version": version, "platform": "all",
     "maintainer": "CMDS",
     "description": "CMDS agy stack (Antigravity IDE/App/CLI + router in Apptainer)",
     "x-build-date": datetime.now(timezone.utc).isoformat(),
-    "x-build-host": socket.gethostname(), "x-build-user": getpass.getuser(),
+    "x-build-host": "<REDACTED>",
 }
 with open(os.path.join(pkg, ".ssm.d", "control.json"), "w") as f:
     json.dump(control, f, indent=2); f.write("\n")
