@@ -12,5 +12,11 @@ RT="$(resolve_runtime)"
 client_session_begin app
 trap 'client_session_end' EXIT
 
+# Best-effort guard: the app's terminal pane sometimes fails to mount on a cold
+# start (the shell spawns, the pane stays invisible). term-autoreload watches
+# for that state and reloads the renderer once. Detached, never blocks the app.
+exec_in_instance "$RT" "$INSTANCE_NAME" bash --noprofile --norc -c \
+  "nohup term-autoreload >>\"\$AGY_STATE/logs/term-autoreload.log\" 2>&1 & echo \$! >\"\$AGY_STATE/${HOST_PIDS_REL}/term-autoreload.pid\""
+
 info "Starting Antigravity App 2.0 (CLOUD_CODE_URL=http://127.0.0.1:${PROXY_PORT})..."
 exec_in_instance "$RT" "$INSTANCE_NAME" antigravity-app "$@"

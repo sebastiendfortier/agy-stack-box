@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Reload the Antigravity App renderer so the terminal pane mounts.
+#
+# Why: on a cold app start, clicking Terminal in the sidebar spawns the shell
+# (a /bin/bash -l child of the language server) but the pane never mounts — no
+# xterm, no tab strip, nothing visible. Reloading the renderer mounts the pane
+# with the already-running shell. Reproduced twice on 2026-11-03; the app is
+# closed-source, so this is a workaround, not a fix.
+#
+# Usage: scripts/agy-term-fix            # reload and report
+#        scripts/agy-term-fix --check    # only report, do not reload
+set -euo pipefail
+
+LS_LOG="${AGY_LS_LOG:-$HOME/.config/Antigravity/logs/language_server.log}"
+
+[[ -f "$LS_LOG" ]] || { echo "error: no language server log at $LS_LOG" >&2; exit 1; }
+
+# The language server logs the Electron debug endpoint it discovered; the port
+# changes on every app start, so read it from the log instead of hardcoding.
+PORT="$(grep -oE 'ws://127\.0\.0\.1:[0-9]+/devtools/browser/' "$LS_LOG" | tail -1 | sed -E 's#.*:([0-9]+)/.*#\1#')"
+[[ -n "$PORT" ]] || { echo "error: no CDP endpoint in $LS_LOG (is the app running?)" >&2; exit 1; }
+
+MODE="${1:-reload}"
+
+node --input-type=module - "$PORT" "$MODE" <<'NODE'
+const [port, mode] = process.argv.slice(2);
+const base = `http://127.0.0.1:${port}`;
+
+const targets = await (await fetch(`${base}/json/list`)).json();
+const page = targets.find((t) => t.type === 'page');
+if (!page) throw new Error('no page target');
+
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+let id = 0;
+const pending = new Map();
+const send = (method, params) =>
+  new Promise((resolve) => {
+    const myId = ++id;
+    pending.set(myId, resolve);
+    ws.send(JSON.stringify({ id: myId, method, params: params || {} }));
+  });
+ws.onmessage = (ev) => {
+  const m = JSON.parse(ev.data);
+  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+};
+await new Promise((r) => (ws.onopen = r));
+
+const count = async () => {
+  const r = await send('Runtime.evaluate', {
+    expression: `document.querySelectorAll('.xterm').length`,
+    returnByValue: true,
+  });
+  return r.result?.result?.value ?? 0;
+};
+
+if (mode !== '--check') {
+  await send('Page.reload', { ignoreCache: false });
+  await new Promise((r) => setTimeout(r, 4000));
+}
+
+for (let i = 0; i < 20; i++) {
+  if ((await count()) > 0) {
+    console.log(`terminal pane mounted (${await count()} xterm)`);
+    ws.close();
+    process.exit(0);
+  }
+  await new Promise((r) => setTimeout(r, 1000));
+}
+
+console.log('terminal pane still not mounted — click Terminal once, then rerun');
+ws.close();
+process.exit(1);
+NODE

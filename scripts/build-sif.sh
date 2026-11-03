@@ -45,18 +45,17 @@ unset_hpc_bind_env_for_build() {
 }
 unset_hpc_bind_env_for_build
 
-# Fakeroot RPM unpack fails on many shared FS ("Inappropriate ioctl for device").
-# Prefer an explicit local TMPDIR; if unset on /fs sitestore, use /tmp.
+# Fakeroot RPM unpack fails on network/parallel filesystems (GPFS, Lustre, NFS)
+# with "Transaction failed" or "Inappropriate ioctl for device".
+# Ensure node-local /tmp is used unless an explicit local directory is given.
 _tmpdir="${APPTAINER_TMPDIR:-${SINGULARITY_TMPDIR:-${TMPDIR:-}}}"
-if [[ -z "${_tmpdir}" && "$ROOT" == /fs/* ]]; then
+if [[ -z "${_tmpdir}" || "${_tmpdir}" == /fs/* || "${_tmpdir}" == /home/* ]]; then
   _tmpdir="/tmp/agy-stack-build-${USER}-$$"
   mkdir -p "$_tmpdir"
-  export APPTAINER_TMPDIR="$_tmpdir" SINGULARITY_TMPDIR="$_tmpdir"
-  info "build: using local TMPDIR=$_tmpdir (sitestore breaks fakeroot rpm unpack)"
+  export APPTAINER_TMPDIR="$_tmpdir" SINGULARITY_TMPDIR="$_tmpdir" TMPDIR="$_tmpdir"
+  info "build: using local TMPDIR=$_tmpdir (network FS breaks fakeroot rpm unpack)"
   # shellcheck disable=SC2064
   trap "rm -rf '$_tmpdir'" EXIT
-elif [[ -n "${_tmpdir}" && ("$_tmpdir" == /fs/* || "$_tmpdir" == /home/*) ]]; then
-  info "warning: TMPDIR=$_tmpdir looks shared — if rpm unpack fails, set APPTAINER_TMPDIR to node-local /tmp"
 fi
 unset _tmpdir
 

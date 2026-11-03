@@ -108,10 +108,11 @@ ls "$VAULT_HOST_PATH/setup" "$VAULT_HOST_PATH/agent-sessions"
 ## Known gaps
 
 1. Predictable loopback proxy ports on shared nodes — prefer personal node.
-2. Runtime smoke test is blocked: Singularity lacks a setuid installation, including under `--fakeroot`; staging now uses `~/ss/tmp` to avoid `/tmp` capacity limits.
-3. Host `/usr` overlay hides the SIF's `/usr/local` Node; the launcher uses the staged Node 22 tree until a new `/apps` image is validated.
-4. `WIRE_HOST=1` overwrites host `GEMINI.md` — use `WIRE_HOST=0` on HPC.
-5. Local Qwen scaffolded via `QWEN_BASE_URL` / `QWEN_MODEL`.
+2. Current SIF contains app binaries under `/apps` (verified from the rebuilt image); older images use `/opt` and remain supported by the resolver.
+3. Runtime smoke test is blocked: this Singularity install lacks a setuid installation, including under `--fakeroot`. The app already open is still running on its existing `/opt` image; it has not been stopped or replaced.
+4. Host `/usr` overlay hides `/usr/local` Node in older images. The rebuilt SIF includes Node under `/apps/node`; validate at runtime before relying on that image.
+5. `WIRE_HOST=1` overwrites host `GEMINI.md` — use `WIRE_HOST=0` on HPC.
+6. Local Qwen scaffolded via `QWEN_BASE_URL` / `QWEN_MODEL`.
 
 ## Safety
 

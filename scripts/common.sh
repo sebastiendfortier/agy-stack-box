@@ -37,6 +37,7 @@ HOST_HOME_REAL="$(readlink -f "$HOST_HOME" 2>/dev/null || echo "$HOST_HOME")"
 
 die() { echo "error: $*" >&2; exit 1; }
 info() { echo "$*"; }
+warn() { echo "warning: $*" >&2; }
 
 # Site SINGULARITY_BINDPATH often includes /home,/fs — a full /home bind can shadow nested
 # ~/.gemini overlays. Drop bare /home (and duplicates) for stack instance/exec; --home covers it.
@@ -78,6 +79,147 @@ sync_gemini_to_home() {
     [[ -f "$src/custom_models.json" ]] && cp -a "$src/custom_models.json" "$dest/"
     [[ -f "$src/mcp_config.json" ]] && cp -a "$src/mcp_config.json" "$dest/"
   done
+}
+
+# Keep the MCP clients in sync with the vault plugin's live key. The plugin
+# generates its own random apiKey on install, so the rendered OBSIDIAN_API_KEY
+# can drift (plugin installed after setup-config, plugin reinstalled). The
+# running server is the source of truth: copy its key into every MCP config
+# that the app/IDE/CLI read, so install order does not matter and Obsidian
+# never has to be restarted just to fix a token. To rotate deliberately,
+# re-run setup-config.sh (it rewrites the plugin key from secrets.env).
+sync_obsidian_mcp_token() {
+  local data="$VAULT_HOST_PATH/.obsidian/plugins/obsidian-local-rest-api/data.json"
+  # Headless nodes run no Obsidian GUI, so there is no MCP server to point at.
+  if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" && "${AGY_FORCE_OBSIDIAN:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$data" ]]; then
+    warn "Local REST API plugin not found in the vault — Obsidian MCP memory disabled."
+    warn "  install 'Local REST API' in Obsidian, then relaunch (or re-run setup-config.sh)."
+    return 0
+  fi
+  local -a targets=()
+  local f
+  for f in \
+    "$STATE_DIR/gemini/antigravity/mcp_config.json" \
+    "$STATE_DIR/gemini/config/mcp_config.json" \
+    "$HOST_HOME/.gemini/antigravity/mcp_config.json" \
+    "$HOST_HOME/.gemini/config/mcp_config.json" \
+    "$HOST_HOME_REAL/.gemini/antigravity/mcp_config.json" \
+    "$HOST_HOME_REAL/.gemini/config/mcp_config.json"; do
+    [[ -f "$f" ]] && targets+=("$f")
+  done
+  [[ ${#targets[@]} -gt 0 ]] || return 0
+  python3 - "$data" "$OBSIDIAN_API_KEY" "${targets[@]}" <<'PY'
+import json, os, sys
+plugin, seed, targets = sys.argv[1], sys.argv[2], sys.argv[3:]
+try:
+    key = json.load(open(plugin)).get("apiKey") or ""
+except Exception:
+    key = ""
+if not key:
+    sys.exit(0)
+mismatch = bool(seed and key != seed)
+seen = set()
+updated = 0
+for path in targets:
+    real = os.path.realpath(path)
+    if real in seen:
+        continue
+    seen.add(real)
+    try:
+        data = json.load(open(real))
+    except Exception:
+        continue
+    obs = data.get("mcpServers", {}).get("obsidian")
+    if not obs:
+        continue
+    token = "Bearer " + key
+    if obs.get("headers", {}).get("Authorization") == token:
+        continue
+    obs.setdefault("headers", {})["Authorization"] = token
+    tmp = real + ".tmp." + str(os.getpid())
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+        fh.write("\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, real)
+    updated += 1
+if updated:
+    print("obsidian MCP token synced from vault plugin (" + str(updated) + " config file(s))")
+    if mismatch:
+        print("note: vault plugin key differs from OBSIDIAN_API_KEY — plugin key wins here; re-run setup-config.sh to rotate")
+PY
+}
+
+# One-time MCP handshake (initialize) against the plugin's bearer auth, using
+# the vault plugin's live key (same source sync_obsidian_mcp_token copies into
+# the client configs). The health probe only proves the listener is up; this
+# proves MCP auth works, so a broken memory setup is logged instead of failing
+# silently. Never fails startup.
+mcp_auth_probe() {
+  local data="$VAULT_HOST_PATH/.obsidian/plugins/obsidian-local-rest-api/data.json"
+  [[ -f "$data" ]] || return 0
+  # Self-contained: resolve the container runtime here rather than relying on
+  # the caller's RT (works standalone, e.g. from tests).
+  local RT
+  RT="$(resolve_runtime)" || return 0
+  # No instance, no probe: skip the retry loop instead of burning ~15s.
+  instance_running "$RT" "$INSTANCE_NAME" || return 0
+  # Read the bearer token from the mounted MCP config inside the instance, so
+  # the secret never appears in a process argument list on a shared host.
+  local probe="$STATE_DIR/logs/mcp-auth-probe.py"
+  cat >"$probe" <<'PY'
+import json, os, sys, urllib.request, urllib.error
+state = os.environ.get("AGY_STATE", "/agy-state")
+cfg = None
+for rel in ("gemini/antigravity/mcp_config.json", "gemini/config/mcp_config.json"):
+    try:
+        cfg = json.load(open(os.path.join(state, rel)))
+        break
+    except Exception:
+        continue
+if not cfg:
+    print("nocfg")
+    sys.exit(0)
+obs = cfg.get("mcpServers", {}).get("obsidian") or {}
+token = (obs.get("headers") or {}).get("Authorization") or ""
+url = obs.get("serverUrl") or ""
+if not token or not url:
+    print("nocfg")
+    sys.exit(0)
+req = urllib.request.Request(
+    url,
+    data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"protocolVersion": "2025-03-26", "capabilities": {},
+                   "clientInfo": {"name": "agy-stack", "version": "0"}}}).encode(),
+    headers={"Authorization": token,
+             "Content-Type": "application/json",
+             "Accept": "application/json, text/event-stream"})
+try:
+    urllib.request.urlopen(req, timeout=5)
+    print("ok")
+except urllib.error.HTTPError as e:
+    print(str(e.code))
+except Exception:
+    print("unreachable")
+PY
+  chmod 600 "$probe"
+  local out
+  for _ in 1 2 3 4 5; do
+    out="$(exec_in_instance "$RT" "$INSTANCE_NAME" bash --noprofile --norc -c \
+      "python3 \"\$AGY_STATE/logs/mcp-auth-probe.py\"" 2>/dev/null || echo unreachable)"
+    [[ "$out" == ok ]] && break
+    sleep 3
+  done
+  case "$out" in
+    ok) info "Obsidian MCP auth OK (vault memory available to app/IDE/CLI)." ;;
+    nocfg) : ;;
+    401|403) warn "Obsidian MCP auth FAILED (HTTP $out): the token in mcp_config.json is not accepted.
+  Check the Local REST API plugin in Obsidian (enabled? vault open?), then relaunch." ;;
+    *) warn "Obsidian MCP auth probe: $out — vault memory unavailable (plugin not up yet?)." ;;
+  esac
 }
 
 require_cmd() {
@@ -233,6 +375,19 @@ host_os_binds() {
   done
 }
 
+# Overlay patched /etc/profile.d files that misbehave inside the SIF.
+#  which2.sh  — the stock file exports the `which` shell function; the language
+#               server's env snapshot truncates it at the first newline, so every
+#               app terminal printed "syntax error: unexpected end of file".
+#  colorgrep.sh — calls /usr/libexec/grepconf.sh, which the SIF does not ship, so
+#               every login shell printed "No such file or directory".
+shell_env_binds() {
+  local f
+  for f in which2.sh colorgrep.sh; do
+    printf '%s\n' "$ROOT/apptainer/rootfs-scripts/$f:/etc/profile.d/$f"
+  done
+}
+
 # HPC/login PATH: module trees live outside the SIF. Bind every absolute PATH /
 # LD_LIBRARY_PATH / MODULEPATH entry (and common software roots) so `module`-loaded
 # tools resolve inside IDE terminals and agy.
@@ -283,7 +438,7 @@ host_path_binds() {
 prepare_stack_bin() {
   local d="$STATE_DIR/stack-bin" s
   mkdir -p "$d"
-  for s in agy antigravity-ide antigravity-app openrouter-proxy obsidian-stack; do
+  for s in agy antigravity-ide antigravity-app openrouter-proxy obsidian-stack term-autoreload; do
     cp -a "$ROOT/apptainer/rootfs-scripts/${s}.sh" "$d/$s"
     chmod +x "$d/$s"
   done
@@ -348,6 +503,7 @@ all_instance_binds() {
   printf '%s\n' "$STATE_DIR:$STATE_IN_CONTAINER"
   while IFS= read -r b; do [[ -n "$b" ]] && printf '%s\n' "$b"; done < <(vault_binds)
   while IFS= read -r b; do [[ -n "$b" ]] && printf '%s\n' "$b"; done < <(host_os_binds)
+  while IFS= read -r b; do [[ -n "$b" ]] && printf '%s\n' "$b"; done < <(shell_env_binds)
   while IFS= read -r b; do [[ -n "$b" ]] && printf '%s\n' "$b"; done < <(host_path_binds)
   while IFS= read -r b; do [[ -n "$b" ]] && printf '%s\n' "$b"; done < <(config_binds)
   while IFS= read -r b; do [[ -n "$b" ]] && printf '%s\n' "$b"; done < <(extra_binds)
@@ -448,7 +604,16 @@ exec_in_instance() {
     [[ -n "$b" ]] && args+=("$b")
   done < <(instance_home_args)
   instance_runtime_env args
-  "$rt" "${args[@]}" "instance://$name" "$@"
+  # Bash functions exported by the host arrive truncated through the container
+  # runtime (e.g. BASH_FUNC_ml%%). Strip serialized functions before starting
+  # any command, so Bash can read ~/.profile without import errors.
+  local -a clean_shell_env=(/usr/bin/env)
+  local env_entry env_name
+  while IFS= read -r -d '' env_entry; do
+    env_name="${env_entry%%=*}"
+    [[ "$env_name" == BASH_FUNC_* ]] && clean_shell_env+=(-u "$env_name")
+  done < <(env -0)
+  "$rt" "${args[@]}" "instance://$name" "${clean_shell_env[@]}" "$@"
 }
 
 # Register a client session (ide|app|cli). Cleared when the launcher exits.
@@ -548,7 +713,7 @@ stop_services() {
           rm -f \"\$f\"
         fi
       done
-      pkill -f \"/apps/obsidian/Obsidian|/opt/obsidian/Obsidian\" 2>/dev/null || true
+      pkill -f \"/apps/obsidian/Obsidian|/opt/obsidian/Obsidian|obsidian-extracted/squashfs-root\" 2>/dev/null || true
       pkill -f \"desktop-service.mjs\" 2>/dev/null || true
       pkill -f \"model-router.mjs\" 2>/dev/null || true
       true
@@ -563,6 +728,10 @@ stop_services() {
   # but visible on the host. UID-scoped so we never touch other users' stacks.
   pkill -u "$(id -u)" -f "model-router.mjs" 2>/dev/null || true
   pkill -u "$(id -u)" -f "openrouter-proxy" 2>/dev/null || true
+  # Obsidian needs the same sweep: an AppImage runtime that dies leaves its window
+  # orphaned outside the instance namespace, where the in-instance pkill above
+  # cannot see it (that is the "window still open after agy-stop" case).
+  pkill -u "$(id -u)" -f "obsidian-extracted/squashfs-root|/apps/obsidian/Obsidian|/opt/obsidian/Obsidian|/tmp/\.mount_[^/]*/obsidian" 2>/dev/null || true
   rm -f "$HOST_RUNTIME_DIR/instance.name" "$STATE_DIR/instance.name"
   info "Stopped."
 }
@@ -577,6 +746,10 @@ ensure_services() {
   # Expanded into container shell snippets (host-scoped pid dir under $AGY_STATE).
   local _cpids="\$AGY_STATE/${HOST_PIDS_REL}"
   RT="$(resolve_runtime)"
+  # Before the host copies are synced, point every MCP config at the key the
+  # vault plugin actually uses. Fixes install-order drift without restarting
+  # Obsidian; deliberately rotating OBSIDIAN_API_KEY still happens in setup-config.
+  sync_obsidian_mcp_token
   sync_gemini_to_home
   mkdir -p "$HOST_RUNTIME_DIR/pids" "$HOST_SESSIONS_DIR" "$STATE_DIR/logs"
 
@@ -590,7 +763,7 @@ ensure_services() {
 
   if ! instance_running "$RT" "$INSTANCE_NAME"; then
     info "Starting instance '$INSTANCE_NAME' (AGY_NET_MODE=$NET_MODE)..."
-    start_args=(instance start)
+    start_args=(instance start --cleanenv)
     case "$NET_MODE" in
       bridge)
         start_args+=(--net --network bridge)
@@ -683,9 +856,11 @@ ensure_services() {
   # Vault stays bind-mounted (files/MCP unaffected). Override: AGY_FORCE_OBSIDIAN=1.
   if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" && "${AGY_FORCE_OBSIDIAN:-0}" != "1" ]]; then
     info "Headless ($HOST_ID): no display — skipping Obsidian GUI (vault still mounted at /vault)."
+  # Any HTTP status (200, 401 from the REST plugin, even 5xx) proves the listener
+  # is up; only a connection failure (curl's 000) means Obsidian is not running.
   elif ! exec_in_instance "$RT" "$INSTANCE_NAME" \
-    "${_sh[@]}" "curl -fsS --max-time 2 http://127.0.0.1:${OBSIDIAN_REST_PORT}/ >/dev/null 2>&1 \
-      || curl -fkSs --max-time 2 https://127.0.0.1:${OBSIDIAN_HTTPS_PORT}/ >/dev/null 2>&1"; then
+    "${_sh[@]}" "code=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://127.0.0.1:${OBSIDIAN_REST_PORT}/ 2>/dev/null || true)
+      [[ -n \"\$code\" && \"\$code\" != 000 ]] || { code=\$(curl -ks -o /dev/null -w '%{http_code}' --max-time 2 https://127.0.0.1:${OBSIDIAN_HTTPS_PORT}/ 2>/dev/null || true); [[ -n \"\$code\" && \"\$code\" != 000 ]]; }"; then
     info "Starting Obsidian AppImage (vault=$VAULT_HOST_PATH)..."
     exec_in_instance "$RT" "$INSTANCE_NAME" \
       "${_sh[@]}" "mkdir -p \"${_cpids}\" \"\$AGY_STATE/logs\"
@@ -698,6 +873,12 @@ ensure_services() {
     info "REST should listen on 127.0.0.1:${OBSIDIAN_REST_PORT} (insecure) inside the instance only."
   else
     info "Obsidian REST already responding on instance loopback."
+  fi
+
+  # Prove the memory path, not just the socket: initialize over MCP with the
+  # plugin's key. Only when a GUI Obsidian is expected (see headless branch).
+  if [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" || "${AGY_FORCE_OBSIDIAN:-0}" == "1" ]]; then
+    mcp_auth_probe
   fi
 
   info "Services up on $HOST_ID."
