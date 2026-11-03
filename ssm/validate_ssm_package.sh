@@ -32,7 +32,10 @@ echo "== structure =="
 ck "control.json exists"            test -f "$PKGDIR/.ssm.d/control.json"
 ck "profile.d loader exists"        test -f "$PKGDIR/etc/profile.d/${PKGNAME}.sh"
 ck "common.sh copied"               test -f "$PKGDIR/share/lib/common.sh"
+ck "render-mcp-config.py copied"    test -f "$PKGDIR/share/lib/render-mcp-config.py"
 ck "AGENTS.md present"              test -f "$PKGDIR/share/agent/AGENTS.md"
+ck "AGENTS.md carries PBS rule"     grep -q "pbs_list_jobs" "$PKGDIR/share/agent/AGENTS.md"
+ck "AGENTS.md bans raw qstat"       grep -q "qstat" "$PKGDIR/share/agent/AGENTS.md"
 for b in agy-ide agy-cli agy-app agy-stop agy-update; do
   ck "bin/$b exec" test -x "$PKGDIR/bin/$b"
 done
@@ -80,7 +83,47 @@ if SSM_PKG_DIR="$PKGDIR" HOME="$HOME_SMOKETMP" bash "$PKGDIR/etc/profile.d/${PKG
 else
   echo "FAIL  loader errored"; FAIL=$((FAIL+1))
 fi
-rm -rf "$HOME_SMOKETMP" "$TMP"
+
+echo "== first-load MCP render smoke =="
+# A fresh install whose secrets.env configures the cmds-agent MCP must end up
+# with a rendered mcp_config.json (cmds-agent + bearer token), and a second
+# load must not clobber it.
+MCP_TMP="$(mktemp -d "${ROOT}/state/apptainer-tmp/validate.XXXXXX")"
+MCP_STATE="$MCP_TMP/.agy-stack/state"
+mkdir -p "$MCP_STATE/vault"
+cat > "$MCP_STATE/secrets.env" <<'MCPSECRETS'
+OPENROUTER_API_KEY=
+OBSIDIAN_API_KEY=
+VAULT_HOST_PATH=/nonexistent-ok-for-render
+CMDS_AGENT_MCP_URL=https://cmds.example/skills-mcp
+CMDS_AGENT_MCP_TOKEN=tok-validate
+WIKI_MCP_URL=
+GITLAB_MCP_URL=
+MCPSECRETS
+chmod 600 "$MCP_STATE/secrets.env"
+if SSM_PKG_DIR="$PKGDIR" HOME="$MCP_TMP" AGY_STACK_STATE="$MCP_STATE" bash "$PKGDIR/etc/profile.d/${PKGNAME}.sh" >/dev/null 2>&1; then
+  MCP_JSON="$MCP_STATE/gemini/antigravity/mcp_config.json"
+  if [[ -f "$MCP_JSON" ]] && python3 -c "
+import json, sys
+d = json.load(open('$MCP_JSON'))
+srv = d.get('mcpServers', {}).get('cmds-agent', {})
+sys.exit(0 if srv.get('serverUrl') == 'https://cmds.example/skills-mcp'
+             and srv.get('headers', {}).get('Authorization') == 'Bearer tok-validate' else 1)"; then
+    # Idempotency: a user-edited config must survive the next load.
+    echo '{}' > "$MCP_JSON"
+    SSM_PKG_DIR="$PKGDIR" HOME="$MCP_TMP" AGY_STACK_STATE="$MCP_STATE" bash "$PKGDIR/etc/profile.d/${PKGNAME}.sh" >/dev/null 2>&1 || true
+    if [[ "$(cat "$MCP_JSON")" == "{}" ]]; then
+      echo "PASS  loader renders cmds-agent MCP + preserves edits"; PASS=$((PASS+1))
+    else
+      echo "FAIL  loader overwrote existing mcp_config.json"; FAIL=$((FAIL+1))
+    fi
+  else
+    echo "FAIL  loader did not render cmds-agent MCP config"; FAIL=$((FAIL+1))
+  fi
+else
+  echo "FAIL  loader errored (MCP smoke)"; FAIL=$((FAIL+1))
+fi
+rm -rf "$HOME_SMOKETMP" "$TMP" "$MCP_TMP"
 
 # Gate: every shell script the deployer assembles must pass bash -n.
 # Catches unterminated quotes in embedded snippets before a maintainer hits

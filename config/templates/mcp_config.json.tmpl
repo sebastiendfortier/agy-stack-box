@@ -9,6 +9,9 @@
       "timeoutSeconds": 300
     },
     "cmds-agent": {
+      "headers": {
+        "Authorization": "Bearer {{CMDS_AGENT_MCP_TOKEN}}"
+      },
       "serverUrl": "{{CMDS_AGENT_MCP_URL}}",
       "disabled": false,
       "timeoutSeconds": 300

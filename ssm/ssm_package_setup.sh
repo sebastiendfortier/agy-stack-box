@@ -51,6 +51,41 @@ fi
 #   proxy/obsidian triple: 30000 + (uid % 10000) * 3 .. +2
 #   router:                20000 + (uid % 10000)
 
+# First-load MCP config: render from the package templates using the user's
+# secrets.env. Never overwrites an existing mcp_config.json — re-run
+# share/lib/render-mcp-config.py manually after changing secrets. Skips
+# silently when python3 is missing or no remote MCP URL is configured yet.
+if [ -f "$_agy_state/secrets.env" ] && [ ! -f "$_agy_state/gemini/antigravity/mcp_config.json" ]; then
+  (
+    set -a
+    # shellcheck disable=SC1090
+    . "$_agy_state/secrets.env" 2>/dev/null
+    # Obsidian values are optional for the remote servers; give the renderer
+    # safe defaults so rendering succeeds on a fresh, half-filled secrets.env.
+    # Must be set while `set -a` is on so python3 inherits them.
+    : "${OBSIDIAN_API_KEY:=}"
+    : "${OBSIDIAN_REST_PORT:=30001}"
+    set +a
+    command -v python3 >/dev/null 2>&1 || exit 0
+    _tmpl=""
+    for _c in "${_agy_stack_dir}/share/templates/mcp_config.json.tmpl" \
+              "${_agy_stack_dir}/config/templates/mcp_config.json.tmpl"; do
+      [ -f "$_c" ] && { _tmpl="$_c"; break; }
+    done
+    [ -n "$_tmpl" ] || exit 0
+    [ -n "${CMDS_AGENT_MCP_URL:-}${WIKI_MCP_URL:-}${GITLAB_MCP_URL:-}" ] || exit 0
+    mkdir -p "$_agy_state/gemini/antigravity" "$_agy_state/gemini/config"
+    python3 "${_agy_stack_dir}/share/lib/render-mcp-config.py" \
+      "$_tmpl" "$_agy_state/gemini/antigravity/mcp_config.json" || exit 0
+    cp -a "$_agy_state/gemini/antigravity/mcp_config.json" \
+          "$_agy_state/gemini/config/mcp_config.json"
+    chmod 600 "$_agy_state/gemini/config/mcp_config.json"
+    case "$-" in
+      *i*) echo "agy-stack-box: rendered MCP config from ${_agy_state}/secrets.env" ;;
+    esac
+  )
+fi
+
 # Always-on harness text tracks the loaded package; replace on every load.
 if [ -f "${_agy_stack_dir}/share/agent/AGENTS.md" ] && [ -n "${AGY_STACK_AGENTS:-${HOME}/.agy-stack/AGENTS.md}" ]; then
   _agy_agents="${AGY_STACK_AGENTS:-${HOME}/.agy-stack/AGENTS.md}"

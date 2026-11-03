@@ -26,6 +26,11 @@ Use placeholders like `<LOGIN_NODE>`, `<QUEUE>`, `<SITESTORE>` in prompts/logs.
 - Ask before reading secret files
 - Prefer dry-run / validate for data & deploy steps
 
+## PBS
+- All job list/status queries go through the `cmds-agent` MCP cache tools (`pbs_list_jobs`, `pbs_job_status`)
+- Never run raw `qstat` (protects PBS Pro)
+- If the `cmds-agent` MCP is not connected, say so instead of falling back to qstat
+
 ## Network
 - Workstation: OpenRouter BYOK OK
 - HPC: prefer local Qwen; do not assume egress

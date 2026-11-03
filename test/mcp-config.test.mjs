@@ -14,7 +14,7 @@ function render(environment = {}) {
   const outputPath = path.join(dir, 'mcp.json');
   try {
     execFileSync('python3', [path.join(root, 'scripts/render-mcp-config.py'), templatePath, outputPath], {
-      env: { ...process.env, OBSIDIAN_API_KEY: 'test-obsidian', OBSIDIAN_REST_PORT: '30001', CMDS_AGENT_MCP_URL: '', WIKI_MCP_URL: '', GITLAB_MCP_URL: '', ...environment },
+      env: { ...process.env, OBSIDIAN_API_KEY: 'test-obsidian', OBSIDIAN_REST_PORT: '30001', CMDS_AGENT_MCP_URL: '', CMDS_AGENT_MCP_TOKEN: '', WIKI_MCP_URL: '', GITLAB_MCP_URL: '', ...environment },
     });
     return JSON.parse(fs.readFileSync(outputPath, 'utf8'));
   } finally {
@@ -37,6 +37,26 @@ test('remote MCP URLs render from environment', () => {
   assert.equal(rendered.mcpServers['cmds-agent'].serverUrl, 'https://cmds.example/skills-mcp');
   assert.equal(rendered.mcpServers.wiki.serverUrl, 'https://wiki.example/mcp');
   assert.equal(rendered.mcpServers.gitlab.serverUrl, 'https://git.example/mcp');
+});
+
+test('cmds-agent renders Authorization only when a token is set', () => {
+  const withToken = render({
+    CMDS_AGENT_MCP_URL: 'https://cmds.example/skills-mcp',
+    CMDS_AGENT_MCP_TOKEN: 'tok-123',
+  });
+  assert.equal(
+    withToken.mcpServers['cmds-agent'].headers.Authorization,
+    'Bearer tok-123',
+  );
+
+  const noToken = render({
+    CMDS_AGENT_MCP_URL: 'https://cmds.example/skills-mcp',
+  });
+  assert.equal(noToken.mcpServers['cmds-agent'].headers, undefined);
+
+  // No URL at all: server omitted, token or not.
+  const noUrl = render({ CMDS_AGENT_MCP_TOKEN: 'tok-123' });
+  assert.equal(noUrl.mcpServers['cmds-agent'], undefined);
 });
 
 test('common runtime has no hard-coded site proxy default', () => {

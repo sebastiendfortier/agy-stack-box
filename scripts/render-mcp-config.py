@@ -21,9 +21,9 @@ def render_config(template_text: str, environment: dict[str, str]) -> str:
     obsidian = config.get("mcpServers", {}).get("obsidian", {})
     headers = obsidian.get("headers", {})
     headers["Authorization"] = f"Bearer {environment.get('OBSIDIAN_API_KEY', '')}"
-    obsidian["serverUrl"] = (
-        f"http://127.0.0.1:{environment.get('OBSIDIAN_REST_PORT', '0')}/mcp/"
-    )
+    # An empty string (half-filled secrets.env) must not beat the default port.
+    obsidian_port = environment.get("OBSIDIAN_REST_PORT", "").strip() or "0"
+    obsidian["serverUrl"] = f"http://127.0.0.1:{obsidian_port}/mcp/"
     servers = config.get("mcpServers")
     if not isinstance(servers, dict):
         raise ValueError("template must contain an mcpServers object")
@@ -39,6 +39,16 @@ def render_config(template_text: str, environment: dict[str, str]) -> str:
             if not url.startswith(("https://", "http://")):
                 raise ValueError(f"{variable} must be an http(s) URL")
             servers[server_name]["serverUrl"] = url
+            # cmds-agent requires a personal bearer token; set it so the
+            # rendered config carries Authorization (token stays in secrets.env).
+            if server_name == "cmds-agent":
+                token = environment.get("CMDS_AGENT_MCP_TOKEN", "").strip()
+                if token:
+                    servers[server_name].setdefault("headers", {})[
+                        "Authorization"
+                    ] = f"Bearer {token}"
+                else:
+                    servers[server_name].pop("headers", None)
         else:
             servers.pop(server_name, None)
 

@@ -52,6 +52,9 @@ Passwords/keys, PII, pre-release forecast products, hostnames/queues/absolute pa
 ## Shell / git
 Confirm before `rm -rf`, mass job submit, production paths. Never force-push. Ask before reading secret files.
 
+## PBS
+All job list/status queries go through the `cmds-agent` MCP cache tools (`pbs_list_jobs`, `pbs_job_status`). Never run raw `qstat` (protects PBS Pro). If the `cmds-agent` MCP is not connected, say so instead of falling back to qstat.
+
 ## Network
 Workstation: OpenRouter BYOK OK. HPC: prefer local Qwen; do not assume egress. Work code stays off personal cloud AI products.
 

@@ -5,6 +5,7 @@
 #   agy-stack-box_<version>_all/
 #     bin/                     agy-ide agy-cli agy-app agy-stop agy-update
 #     share/lib/common.sh      shared host-side helpers (copy of scripts/common.sh)
+#     share/lib/render-mcp-config.py  MCP config renderer (first-load seeding)
 #     share/container/         agy-stack-box.sif (optional at build time)
 #     share/agent/AGENTS.md    always-on harness text
 #     share/templates/         secrets.env.tmpl + config templates
@@ -48,6 +49,8 @@ chmod 755 "${OUT}/${PKGNAME}/bin/"*
 
 # --- share ------------------------------------------------------------------
 cp "${ROOT}/scripts/common.sh" "${OUT}/${PKGNAME}/share/lib/common.sh"
+cp "${ROOT}/scripts/render-mcp-config.py" "${OUT}/${PKGNAME}/share/lib/render-mcp-config.py"
+chmod 644 "${OUT}/${PKGNAME}/share/lib/render-mcp-config.py"
 if [[ -f "${ROOT}/harness/cmc-profile/AGENTS.md" ]]; then
   cp "${ROOT}/harness/cmc-profile/AGENTS.md" "${OUT}/${PKGNAME}/share/agent/AGENTS.md"
 else
