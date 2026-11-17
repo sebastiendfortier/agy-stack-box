@@ -28,6 +28,7 @@ Use placeholders like `<LOGIN_NODE>`, `<QUEUE>`, `<SITESTORE>` in prompts/logs.
 
 ## PBS
 - All job list/status queries go through the `cmds-agent` MCP cache tools (`pbs_list_jobs`, `pbs_job_status`)
+- Before submitting PBS jobs, call `cmds-agent` MCP `topology_facts` and `skills_get` (`pbs-job-authoring`) to pick the non-production PPP
 - Never run raw `qstat` (protects PBS Pro)
 - If the `cmds-agent` MCP is not connected, say so instead of falling back to qstat
 
